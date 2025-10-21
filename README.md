@@ -1,6 +1,6 @@
 # Data Analyst Agent
 
-An AI-powered data analysis application that allows users to upload CSV files and perform interactive data analysis through a conversational interface powered by OpenAI's GPT-4.
+An AI-powered data analysis application that allows users to upload CSV files and perform interactive data analysis through a conversational interface powered by OpenAI's GPT-4o.
 
 [![Built with Next.js](https://img.shields.io/badge/Next.js-15-black?style=for-the-badge&logo=next.js)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
