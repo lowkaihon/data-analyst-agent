@@ -85,22 +85,12 @@ export default function Home() {
         const preview = await executeQuery(db, "SELECT * FROM t_parsed", 30000, 100)
         setPreviewData(preview)
 
-        // Add system message with optional data description
-        const greetingParts = [
-          `File "${file.name}" loaded successfully! ${count.toLocaleString()} rows, ${schemaInfo.length} columns.`,
-        ]
-
-        if (dataDescription) {
-          greetingParts.push(`\nI understand this is ${dataDescription.toLowerCase()}.`)
-        }
-
-        greetingParts.push("\nWhat would you like to analyze?")
-
+        // Add system message
         setMessages([
           {
             id: Date.now().toString(),
             role: "assistant",
-            content: greetingParts.join(""),
+            content: `File "${file.name}" loaded successfully! ${count.toLocaleString()} rows, ${schemaInfo.length} columns. What would you like to analyze?`,
           },
         ])
       } catch (err) {
@@ -156,11 +146,11 @@ export default function Home() {
         const data = await response.json()
         const plan: Plan = data.plan
 
-        // Add assistant message with plan using dynamic introduction
+        // Add assistant message with plan
         const assistantMessage: Message = {
           id: (Date.now() + 1).toString(),
           role: "assistant",
-          content: plan.introduction || "I've created an analysis plan for you. Please review and approve it to proceed.",
+          content: "I've created an analysis plan for you. Please review and approve it to proceed.",
           plan,
           planStatus: "pending",
         }
@@ -253,19 +243,11 @@ export default function Home() {
         }
       }
 
-      // Add completion message with follow-up suggestions
+      // Add completion message
       const completionMessage: Message = {
         id: `${Date.now()}-complete`,
         role: "assistant",
-        content: `Analysis complete! All ${totalSteps} ${totalSteps === 1 ? "step has" : "steps have"} been executed successfully.
-
-You might want to:
-• Ask for specific insights about the results
-• Request a different visualization or breakdown
-• Drill down into interesting patterns you noticed
-• Generate a summary report of this analysis
-
-What would you like to explore next?`,
+        content: `Analysis complete! All ${totalSteps} steps have been executed successfully. You can view the results in the Preview and Charts tabs.`,
       }
       setMessages((prev) => [...prev, completionMessage])
     },
