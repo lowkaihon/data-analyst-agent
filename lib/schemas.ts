@@ -23,7 +23,6 @@ export const PlanStepSchema = z.object({
 })
 
 export const PlanSchema = z.object({
-  introduction: z.string().describe("A brief, friendly 1-2 sentence introduction explaining what analysis you'll perform. Be conversational and specific to the user's question."),
   reasoning: z.string(),
   steps: z.array(PlanStepSchema),
 })
