@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback, useEffect } from "react"
+import { useState, useCallback, useEffect, useRef } from "react"
 import { UploadZone } from "@/components/upload-zone"
 import { ChatInterface, type Message } from "@/components/chat-interface"
 import { DataTabs } from "@/components/data-tabs"
@@ -10,6 +10,8 @@ import { getSample } from "@/lib/profiling"
 import { createParsedView } from "@/lib/time-parsing"
 import type { AsyncDuckDB } from "@duckdb/duckdb-wasm"
 import type { SQLResult, ColumnInfo, ChartSpec, Plan } from "@/lib/schemas"
+import { PanelGroup, Panel, PanelResizeHandle, ImperativePanelHandle } from "react-resizable-panels"
+import { ChevronLeft, ChevronRight } from "lucide-react"
 
 interface SQLHistoryItem {
   sql: string
@@ -37,6 +39,10 @@ export default function Home() {
   const [sqlHistory, setSqlHistory] = useState<SQLHistoryItem[]>([])
   const [charts, setCharts] = useState<ChartItem[]>([])
   const [reportContent, setReportContent] = useState("")
+
+  // Panel refs for collapse/expand functionality
+  const leftPanelRef = useRef<ImperativePanelHandle>(null)
+  const rightPanelRef = useRef<ImperativePanelHandle>(null)
 
   // Initialize DuckDB on mount
   useEffect(() => {
@@ -338,9 +344,16 @@ export default function Home() {
             </div>
           </div>
         ) : (
-          <div className="h-full flex">
-            {/* Left pane: Chat */}
-            <div className="w-1/2 border-r flex flex-col overflow-hidden">
+          <PanelGroup direction="horizontal" autoSaveId="main-layout" className="h-full">
+            {/* Left panel: Chat */}
+            <Panel
+              ref={leftPanelRef}
+              defaultSize={50}
+              minSize={20}
+              maxSize={80}
+              collapsible
+              className="flex flex-col overflow-hidden"
+            >
               <ChatInterface
                 messages={messages}
                 onSendMessage={handleSendMessage}
@@ -349,10 +362,55 @@ export default function Home() {
                 onExecuteSQL={handleExecuteSQL}
                 disabled={isLoading}
               />
-            </div>
+            </Panel>
 
-            {/* Right pane: Data Tabs */}
-            <div className="w-1/2 flex flex-col overflow-hidden">
+            {/* Resize handle with collapse/expand buttons */}
+            <PanelResizeHandle className="relative group w-1.5 bg-border hover:bg-primary/50 transition-colors cursor-col-resize active:bg-primary">
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button
+                  onClick={() => {
+                    const panel = leftPanelRef.current
+                    if (panel) {
+                      if (panel.isCollapsed()) {
+                        panel.expand()
+                      } else {
+                        panel.collapse()
+                      }
+                    }
+                  }}
+                  className="p-1 bg-background border rounded shadow-sm hover:bg-accent"
+                  title="Toggle left panel"
+                >
+                  <ChevronLeft className="h-3 w-3" />
+                </button>
+                <button
+                  onClick={() => {
+                    const panel = rightPanelRef.current
+                    if (panel) {
+                      if (panel.isCollapsed()) {
+                        panel.expand()
+                      } else {
+                        panel.collapse()
+                      }
+                    }
+                  }}
+                  className="p-1 bg-background border rounded shadow-sm hover:bg-accent"
+                  title="Toggle right panel"
+                >
+                  <ChevronRight className="h-3 w-3" />
+                </button>
+              </div>
+            </PanelResizeHandle>
+
+            {/* Right panel: Data Tabs */}
+            <Panel
+              ref={rightPanelRef}
+              defaultSize={50}
+              minSize={20}
+              maxSize={80}
+              collapsible
+              className="flex flex-col overflow-hidden"
+            >
               <DataTabs
                 previewData={previewData}
                 schema={schema}
@@ -362,8 +420,8 @@ export default function Home() {
                 reportContent={reportContent}
                 onReportChange={handleReportChange}
               />
-            </div>
-          </div>
+            </Panel>
+          </PanelGroup>
         )}
       </div>
     </div>

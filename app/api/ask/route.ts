@@ -46,7 +46,8 @@ IMPORTANT RULES:
 2. Use DuckDB SQL syntax
 3. The table name is "t_parsed"
 4. Keep queries efficient and add LIMIT clauses
-5. For visualizations, provide Vega-Lite specs following these guidelines:
+5. NEVER add semicolons at the end of SQL queries - the system will add them automatically
+6. For visualizations, provide Vega-Lite specs following these guidelines:
    - Use appropriate chart types (bar, line, area, scatter, etc.)
    - Apply a professional color scheme (use config.range.category for categorical colors)
    - Set proper width/height (width: 500-600, height: 300-400 for most charts)
