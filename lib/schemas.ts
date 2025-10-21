@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { VegaLiteSpecSchema } from "./vega-types"
 
 /**
  * Zod schemas for type safety
@@ -18,7 +19,7 @@ export const PlanStepSchema = z.object({
   step: z.number(),
   description: z.string(),
   sql: z.string().optional(),
-  chartSpec: z.any().optional(),
+  chartSpec: VegaLiteSpecSchema.optional(),
 })
 
 export const PlanSchema = z.object({
@@ -29,17 +30,11 @@ export const PlanSchema = z.object({
 export const SQLResultSchema = z.object({
   columns: z.array(z.string()),
   rows: z.array(z.array(z.unknown())),
+  executionTimeMs: z.number().optional(),
 })
 
-export const ChartSpecSchema = z.object({
-  $schema: z.string().optional(),
-  data: z.any(),
-  mark: z.any(),
-  encoding: z.any().optional(),
-  layer: z.any().optional(),
-  width: z.number().optional(),
-  height: z.number().optional(),
-})
+// Re-export VegaLiteSpecSchema as ChartSpecSchema for backwards compatibility
+export const ChartSpecSchema = VegaLiteSpecSchema
 
 export type ColumnInfo = z.infer<typeof ColumnSchema>
 export type SchemaInfo = z.infer<typeof SchemaInfoSchema>

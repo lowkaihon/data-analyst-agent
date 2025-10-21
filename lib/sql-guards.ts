@@ -1,3 +1,5 @@
+import { SQLValidationError } from "./errors"
+
 /**
  * SQL sanitization and read-only enforcement
  */
@@ -55,17 +57,19 @@ export function sanitizeSQL(sql: string): string {
 
 /**
  * Validate and sanitize SQL query
- * Throws error if SQL is not read-only
+ * Throws SQLValidationError if SQL is not read-only
  */
 export function validateSQL(sql: string): string {
   const sanitized = sanitizeSQL(sql)
 
   if (!sanitized) {
-    throw new Error("Empty SQL query")
+    throw new SQLValidationError("Empty SQL query")
   }
 
   if (!isReadOnlySQL(sanitized)) {
-    throw new Error("Only read-only queries (SELECT, WITH, PRAGMA) are allowed")
+    throw new SQLValidationError("Only read-only queries (SELECT, WITH, PRAGMA) are allowed", {
+      sql: sanitized,
+    })
   }
 
   return sanitized
