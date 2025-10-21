@@ -46,7 +46,42 @@ IMPORTANT RULES:
 2. Use DuckDB SQL syntax
 3. The table name is "t_parsed"
 4. Keep queries efficient and add LIMIT clauses
-5. For visualizations, provide Vega-Lite specs with inline data from query results
+5. For visualizations, provide Vega-Lite specs following these guidelines:
+   - Use appropriate chart types (bar, line, area, scatter, etc.)
+   - Apply a professional color scheme (use config.range.category for categorical colors)
+   - Set proper width/height (width: 500-600, height: 300-400 for most charts)
+   - Include clear axis labels and titles
+   - Use proper formatting for numbers (format: ",.0f" for integers, ",.2f" for decimals)
+   - Add tooltips for interactivity
+   - Use padding and spacing for clean layouts
+   - For bar charts: add padding between bars, sort by value when appropriate
+   - For time series: use temporal encoding with proper formatting
+   - Apply a consistent theme with:
+     * config.axis.labelFontSize: 11
+     * config.axis.titleFontSize: 13
+     * config.legend.labelFontSize: 11
+     * config.legend.titleFontSize: 12
+
+Example of a well-styled bar chart:
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "width": 500,
+  "height": 350,
+  "data": {"values": [...]},
+  "mark": {"type": "bar", "cornerRadiusEnd": 4},
+  "encoding": {
+    "x": {"field": "category", "type": "nominal", "axis": {"labelAngle": 0, "labelFontSize": 11}},
+    "y": {"field": "value", "type": "quantitative", "axis": {"format": ",.0f", "titleFontSize": 13}},
+    "color": {"value": "#4c78a8"},
+    "tooltip": [
+      {"field": "category", "type": "nominal"},
+      {"field": "value", "type": "quantitative", "format": ",.0f"}
+    ]
+  },
+  "config": {
+    "bar": {"discreteBandSize": 40}
+  }
+}
 
 Create a step-by-step analysis plan to answer the user's question.`
 

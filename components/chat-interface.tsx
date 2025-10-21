@@ -10,6 +10,7 @@ import { Send, User, Bot } from "lucide-react"
 import { PlanCard } from "./plan-card"
 import { SQLCard } from "./sql-card"
 import { ChartCard } from "./chart-card"
+import { StepCard } from "./step-card"
 import type { Plan, ChartSpec } from "@/lib/schemas"
 
 export interface Message {
@@ -20,6 +21,9 @@ export interface Message {
   planStatus?: "pending" | "approved" | "rejected"
   sql?: string
   chart?: ChartSpec
+  stepNumber?: number
+  totalSteps?: number
+  isExecuting?: boolean
 }
 
 interface ChatInterfaceProps {
@@ -84,7 +88,7 @@ export function ChatInterface({
             </div>
 
             <div className="flex-1 space-y-3">
-              {message.content && (
+              {message.content && !message.stepNumber && (
                 <Card className="p-3">
                   <p className="text-sm whitespace-pre-wrap">{message.content}</p>
                 </Card>
@@ -99,9 +103,19 @@ export function ChatInterface({
                 />
               )}
 
-              {message.sql && <SQLCard sql={message.sql} onExecute={onExecuteSQL} />}
+              {message.stepNumber && message.totalSteps && message.content && (
+                <StepCard
+                  stepNumber={message.stepNumber}
+                  totalSteps={message.totalSteps}
+                  description={message.content}
+                  isExecuting={message.isExecuting}
+                  isCompleted={!message.isExecuting && (message.sql !== undefined || message.chart !== undefined)}
+                />
+              )}
 
-              {message.chart && <ChartCard spec={message.chart} />}
+              {message.sql && <SQLCard sql={message.sql} onExecute={onExecuteSQL} stepNumber={message.stepNumber} autoExecute />}
+
+              {message.chart && <ChartCard spec={message.chart} title={message.content} />}
             </div>
           </div>
         ))}

@@ -162,7 +162,7 @@ export default function Home() {
     [db, schema, rowCount, dataDescription],
   )
 
-  // Handle plan approval
+  // Handle plan approval with sequential execution
   const handleApprovePlan = useCallback(
     async (messageId: string) => {
       setMessages((prev) =>
@@ -173,29 +173,77 @@ export default function Home() {
       const message = messages.find((m) => m.id === messageId)
       if (!message?.plan) return
 
-      // Execute steps with SQL
-      for (const step of message.plan.steps) {
-        if (step.sql) {
-          const sqlMessage: Message = {
-            id: `${Date.now()}-${step.step}`,
-            role: "assistant",
-            content: `Executing step ${step.step}: ${step.description}`,
-            sql: step.sql,
-          }
-          setMessages((prev) => [...prev, sqlMessage])
+      const totalSteps = message.plan.steps.length
+
+      // Execute steps sequentially with delays for natural flow
+      for (let i = 0; i < message.plan.steps.length; i++) {
+        const step = message.plan.steps[i]
+        const stepNumber = step.step
+
+        // Add a small delay before each step for natural pacing
+        if (i > 0) {
+          await new Promise((resolve) => setTimeout(resolve, 800))
         }
 
+        // Show step header with "executing" state
+        const stepHeaderMessage: Message = {
+          id: `${Date.now()}-step-${stepNumber}`,
+          role: "assistant",
+          content: step.description,
+          stepNumber,
+          totalSteps,
+          isExecuting: true,
+        }
+        setMessages((prev) => [...prev, stepHeaderMessage])
+
+        // Small delay before showing SQL/chart
+        await new Promise((resolve) => setTimeout(resolve, 400))
+
+        // Mark step as complete and add SQL if present
+        if (step.sql) {
+          // Update step header to not executing
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === stepHeaderMessage.id ? { ...msg, isExecuting: false, sql: step.sql } : msg,
+            ),
+          )
+
+          // Wait for SQL execution to complete (auto-executes via SQLCard)
+          await new Promise((resolve) => setTimeout(resolve, 1200))
+        }
+
+        // Add chart if present
         if (step.chartSpec) {
           const chartMessage: Message = {
-            id: `${Date.now()}-chart-${step.step}`,
+            id: `${Date.now()}-chart-${stepNumber}`,
             role: "assistant",
-            content: `Generated visualization for step ${step.step}`,
+            content: `Visualization for step ${stepNumber}`,
             chart: step.chartSpec,
+            stepNumber,
+            totalSteps,
           }
           setMessages((prev) => [...prev, chartMessage])
           setCharts((prev) => [...prev, { spec: step.chartSpec!, title: step.description }])
+
+          // Small delay after chart
+          await new Promise((resolve) => setTimeout(resolve, 600))
+        }
+
+        // If step had no SQL, mark as complete
+        if (!step.sql) {
+          setMessages((prev) =>
+            prev.map((msg) => (msg.id === stepHeaderMessage.id ? { ...msg, isExecuting: false } : msg)),
+          )
         }
       }
+
+      // Add completion message
+      const completionMessage: Message = {
+        id: `${Date.now()}-complete`,
+        role: "assistant",
+        content: `Analysis complete! All ${totalSteps} steps have been executed successfully. You can view the results in the Preview and Charts tabs.`,
+      }
+      setMessages((prev) => [...prev, completionMessage])
     },
     [messages],
   )
