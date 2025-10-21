@@ -15,6 +15,7 @@ interface SQLHistoryItem {
   sql: string
   timestamp: Date
   success: boolean
+  executionTimeMs?: number
 }
 
 interface ChartItem {
@@ -226,13 +227,14 @@ export default function Home() {
         // Update preview with results
         setPreviewData(result)
 
-        // Add to history
+        // Add to history with execution time
         setSqlHistory((prev) => [
           ...prev,
           {
             sql: validatedSQL,
             timestamp: new Date(),
             success: true,
+            executionTimeMs: result.executionTimeMs,
           },
         ])
       } catch (err) {

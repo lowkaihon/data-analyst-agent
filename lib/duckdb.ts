@@ -81,14 +81,17 @@ function convertBigIntToNumber(value: unknown): unknown {
 
 /**
  * Execute a SQL query with timeout and result limit
+ * Returns query results along with execution time in milliseconds
  */
 export async function executeQuery(
   db: duckdb.AsyncDuckDB,
   sql: string,
   timeoutMs = 30000,
   maxRows = 1000,
-): Promise<{ columns: string[]; rows: unknown[][] }> {
+): Promise<{ columns: string[]; rows: unknown[][]; executionTimeMs: number }> {
   const conn = await db.connect()
+  const startTime = performance.now()
+
   try {
     // Add LIMIT if not present
     const limitedSQL = sql.trim().match(/LIMIT\s+\d+/i) ? sql : `${sql} LIMIT ${maxRows}`
@@ -101,8 +104,9 @@ export async function executeQuery(
 
     const columns = result.schema.fields.map((f) => f.name)
     const rows = result.toArray().map((row) => Object.values(row).map(convertBigIntToNumber))
+    const executionTimeMs = Math.round(performance.now() - startTime)
 
-    return { columns, rows }
+    return { columns, rows, executionTimeMs }
   } finally {
     await conn.close()
   }

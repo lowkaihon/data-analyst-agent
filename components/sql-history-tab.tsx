@@ -6,6 +6,7 @@ interface SQLHistoryItem {
   sql: string
   timestamp: Date
   success: boolean
+  executionTimeMs?: number
 }
 
 interface SQLHistoryTabProps {
@@ -35,7 +36,16 @@ export function SQLHistoryTab({ history }: SQLHistoryTabProps) {
             <pre className="bg-muted p-3 rounded text-xs overflow-x-auto">
               <code>{item.sql}</code>
             </pre>
-            {!item.success && <p className="text-sm text-destructive mt-2">Query failed</p>}
+            <div className="flex items-center justify-between mt-2">
+              {!item.success ? (
+                <p className="text-sm text-destructive">Query failed</p>
+              ) : (
+                <p className="text-sm text-green-600">Success</p>
+              )}
+              {item.executionTimeMs !== undefined && (
+                <p className="text-xs text-muted-foreground">Executed in {item.executionTimeMs}ms</p>
+              )}
+            </div>
           </CardContent>
         </Card>
       ))}
