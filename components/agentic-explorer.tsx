@@ -87,36 +87,50 @@ export function AgenticExplorer({
     data: any
   }> = []
 
-  messages.forEach((message) => {
+  // Track seen IDs to prevent duplicates
+  const seenIds = new Set<string>()
+
+  messages.forEach((message, messageIndex) => {
     const parts = (message as any).parts || []
 
-    // Add tool calls
+    // Process all parts in order
     parts.forEach((part: any, partIndex: number) => {
       if (part.type?.startsWith("tool-")) {
-        // Generate unique ID using toolCallId if available, otherwise use message id + type + index
+        // Generate unique ID - use toolCallId for true uniqueness across updates
         const uniqueId =
           part.toolCallId || part.id || `${message.id}-${part.type}-${partIndex}`
+        const fullId = `tool-${uniqueId}`
 
-        flowItems.push({
-          type: "tool",
-          id: `tool-${uniqueId}`,
-          data: part as ToolUIPart,
-        })
+        // Only add if not already seen
+        if (!seenIds.has(fullId)) {
+          seenIds.add(fullId)
+          flowItems.push({
+            type: "tool",
+            id: fullId,
+            data: part as ToolUIPart,
+          })
+        }
       }
     })
 
-    // Add text content
+    // Add text content - one per message
     const textParts = parts.filter((p: any) => p.type === "text")
     const hasTextContent = textParts.length > 0
 
     if (hasTextContent && message.role === "assistant") {
-      flowItems.push({
-        type: "text",
-        id: `text-${message.id}`,
-        data: {
-          content: textParts.map((p: any) => p.text).join(""),
-        },
-      })
+      const textId = `text-${message.id}`
+
+      // Only add if not already seen
+      if (!seenIds.has(textId)) {
+        seenIds.add(textId)
+        flowItems.push({
+          type: "text",
+          id: textId,
+          data: {
+            content: textParts.map((p: any) => p.text).join(""),
+          },
+        })
+      }
     }
   })
 
