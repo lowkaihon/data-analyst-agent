@@ -18,6 +18,10 @@ interface SQLHistoryItem {
   timestamp: Date
   success: boolean
   executionTimeMs?: number
+  result?: {
+    columns: string[]
+    rows: unknown[][]
+  }
 }
 
 interface ChartItem {
@@ -39,6 +43,8 @@ export default function Home() {
   const [sqlHistory, setSqlHistory] = useState<SQLHistoryItem[]>([])
   const [charts, setCharts] = useState<ChartItem[]>([])
   const [reportContent, setReportContent] = useState("")
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false)
+  const [activeTab, setActiveTab] = useState("preview")
 
   // Panel refs for collapse/expand functionality
   const leftPanelRef = useRef<ImperativePanelHandle>(null)
@@ -281,7 +287,7 @@ export default function Home() {
         // Update preview with results
         setPreviewData(result)
 
-        // Add to history with execution time
+        // Add to history with execution time and results
         setSqlHistory((prev) => [
           ...prev,
           {
@@ -289,6 +295,10 @@ export default function Home() {
             timestamp: new Date(),
             success: true,
             executionTimeMs: result.executionTimeMs,
+            result: {
+              columns: result.columns,
+              rows: result.rows,
+            },
           },
         ])
       } catch (err) {
@@ -311,6 +321,56 @@ export default function Home() {
   const handleReportChange = useCallback((content: string) => {
     setReportContent(content)
   }, [])
+
+  // Handle report generation
+  const handleGenerateReport = useCallback(async () => {
+    if (!schema) return
+
+    setIsGeneratingReport(true)
+    try {
+      // Get the original question from the first user message
+      const firstUserMessage = messages.find((m) => m.role === "user")
+      const question = firstUserMessage?.content || "Data analysis"
+
+      // Call the report API
+      const response = await fetch("/api/report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question,
+          schema,
+          sqlHistory: sqlHistory
+            .filter((h) => h.success && h.result)
+            .map((h) => ({
+              sql: h.sql,
+              result: h.result,
+            })),
+          charts: charts.map((c) => c.spec),
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to generate report")
+      }
+
+      const data = await response.json()
+      setReportContent(data.report)
+
+      // Switch to report tab
+      setActiveTab("report")
+    } catch (err) {
+      console.error("[v0] Error generating report:", err)
+      // Optionally add an error message
+      const errorMessage: Message = {
+        id: Date.now().toString(),
+        role: "assistant",
+        content: `Error generating report: ${err instanceof Error ? err.message : "Unknown error"}`,
+      }
+      setMessages((prev) => [...prev, errorMessage])
+    } finally {
+      setIsGeneratingReport(false)
+    }
+  }, [schema, messages, sqlHistory, charts])
 
   return (
     <div className="h-screen flex flex-col">
@@ -361,6 +421,9 @@ export default function Home() {
                 onRejectPlan={handleRejectPlan}
                 onExecuteSQL={handleExecuteSQL}
                 disabled={isLoading}
+                onGenerateReport={handleGenerateReport}
+                isGeneratingReport={isGeneratingReport}
+                isDataLoaded={!!fileName}
               />
             </Panel>
 
@@ -419,6 +482,11 @@ export default function Home() {
                 charts={charts}
                 reportContent={reportContent}
                 onReportChange={handleReportChange}
+                onGenerateReport={handleGenerateReport}
+                isGeneratingReport={isGeneratingReport}
+                isDataLoaded={!!fileName}
+                activeTab={activeTab}
+                onActiveTabChange={setActiveTab}
               />
             </Panel>
           </PanelGroup>

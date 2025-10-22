@@ -6,7 +6,7 @@ import { useState, useRef, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card } from "@/components/ui/card"
-import { Send, User, Bot } from "lucide-react"
+import { Send, User, Bot, FileText, Loader2 } from "lucide-react"
 import { PlanCard } from "./plan-card"
 import { SQLCard } from "./sql-card"
 import { ChartCard } from "./chart-card"
@@ -33,6 +33,9 @@ interface ChatInterfaceProps {
   onRejectPlan: (messageId: string) => void
   onExecuteSQL: (sql: string) => Promise<void>
   disabled?: boolean
+  onGenerateReport?: () => void
+  isGeneratingReport?: boolean
+  isDataLoaded?: boolean
 }
 
 export function ChatInterface({
@@ -42,6 +45,9 @@ export function ChatInterface({
   onRejectPlan,
   onExecuteSQL,
   disabled,
+  onGenerateReport,
+  isGeneratingReport,
+  isDataLoaded,
 }: ChatInterfaceProps) {
   const [input, setInput] = useState("")
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -124,7 +130,27 @@ export function ChatInterface({
       </div>
 
       {/* Input area */}
-      <div className="border-t p-4">
+      <div className="border-t p-4 space-y-2">
+        {onGenerateReport && (
+          <Button
+            onClick={onGenerateReport}
+            disabled={!isDataLoaded || isGeneratingReport}
+            variant="outline"
+            className="w-full"
+          >
+            {isGeneratingReport ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Generating Report...
+              </>
+            ) : (
+              <>
+                <FileText className="mr-2 h-4 w-4" />
+                Generate Report
+              </>
+            )}
+          </Button>
+        )}
         <form onSubmit={handleSubmit} className="flex gap-2">
           <Input
             value={input}

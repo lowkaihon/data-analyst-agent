@@ -22,6 +22,11 @@ interface DataTabsProps {
   charts: Array<{ spec: ChartSpec; title?: string; description?: string }>
   reportContent: string
   onReportChange: (content: string) => void
+  onGenerateReport?: () => void
+  isGeneratingReport?: boolean
+  isDataLoaded?: boolean
+  activeTab?: string
+  onActiveTabChange?: (tab: string) => void
 }
 
 export function DataTabs({
@@ -32,9 +37,19 @@ export function DataTabs({
   charts,
   reportContent,
   onReportChange,
+  onGenerateReport,
+  isGeneratingReport,
+  isDataLoaded,
+  activeTab,
+  onActiveTabChange,
 }: DataTabsProps) {
   return (
-    <Tabs defaultValue="preview" className="h-full flex flex-col">
+    <Tabs
+      value={activeTab}
+      onValueChange={onActiveTabChange}
+      defaultValue="preview"
+      className="h-full flex flex-col"
+    >
       <TabsList className="w-full justify-start rounded-none border-b">
         <TabsTrigger value="preview">Preview</TabsTrigger>
         <TabsTrigger value="schema">Schema</TabsTrigger>
@@ -61,7 +76,13 @@ export function DataTabs({
         </TabsContent>
 
         <TabsContent value="report" className="h-full m-0">
-          <ReportTab initialContent={reportContent} onContentChange={onReportChange} />
+          <ReportTab
+            initialContent={reportContent}
+            onContentChange={onReportChange}
+            onGenerateReport={onGenerateReport}
+            isGeneratingReport={isGeneratingReport}
+            isDataLoaded={isDataLoaded}
+          />
         </TabsContent>
       </div>
     </Tabs>
