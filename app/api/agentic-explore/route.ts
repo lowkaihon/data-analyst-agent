@@ -4,7 +4,12 @@ import { z } from "zod"
 import { sqlExecutorTool } from "@/lib/tools/sql-executor"
 
 const RequestSchema = z.object({
-  question: z.string(),
+  messages: z.array(
+    z.object({
+      role: z.enum(["user", "assistant", "system"]),
+      content: z.string(),
+    }),
+  ),
   schema: z.array(
     z.object({
       name: z.string(),
@@ -23,12 +28,20 @@ const RequestSchema = z.object({
 export async function POST(req: Request) {
   try {
     const body = await req.json()
-    const { question, schema, sample, rowCount, dataDescription, maxSteps } =
+    const { messages, schema, sample, rowCount, dataDescription, maxSteps } =
       RequestSchema.parse(body)
 
     // Check for API key
     if (!process.env.OPENAI_API_KEY) {
       return Response.json({ error: "OPENAI_API_KEY not configured" }, { status: 500 })
+    }
+
+    // Extract the user's question from messages
+    const userMessages = messages.filter((m) => m.role === "user")
+    const question = userMessages[userMessages.length - 1]?.content || ""
+
+    if (!question) {
+      return Response.json({ error: "No question provided" }, { status: 400 })
     }
 
     // Build system prompt with dataset context

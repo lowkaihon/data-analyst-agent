@@ -1,8 +1,8 @@
 "use client"
 
-// @ts-ignore - ai/react types may not be fully available
-import { useChat } from "ai/react"
-import { useState } from "react"
+import { useChat } from "@ai-sdk/react"
+import { DefaultChatTransport } from "ai"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -22,6 +22,15 @@ interface AgenticExplorerProps {
   onGenerateReport?: () => void
 }
 
+type ToolUIPart = {
+  type: string
+  toolCallId?: string
+  state: "input-streaming" | "input-available" | "output-available" | "output-error"
+  input?: any
+  output?: any
+  errorText?: string
+}
+
 export function AgenticExplorer({
   question,
   schema,
@@ -31,72 +40,110 @@ export function AgenticExplorer({
   onExplorationComplete,
   onGenerateReport,
 }: AgenticExplorerProps) {
-  const [isExplorationComplete, setIsExplorationComplete] = useState(false)
+  const [hasStarted, setHasStarted] = useState(false)
 
-  const { messages, append, isLoading } = useChat({
-    api: "/api/agentic-explore",
-    body: {
-      question,
-      schema,
-      sample,
-      rowCount,
-      dataDescription,
-    },
-
-    onToolCall: ({ toolCall }: any) => {
-      console.log(`🔧 Tool called: ${toolCall.toolName}`, toolCall.args)
-    },
-
-    onFinish: (message: any) => {
-      console.log("✅ Exploration complete", message)
-      setIsExplorationComplete(true)
-      if (onExplorationComplete && message.content) {
-        onExplorationComplete(message.content)
-      }
-    },
-
-    onError: (error: any) => {
-      console.error("❌ Exploration error:", error)
-    },
+  const { messages, status, sendMessage } = useChat({
+    transport: new DefaultChatTransport({
+      api: "/api/agentic-explore",
+      body: {
+        schema,
+        sample,
+        rowCount,
+        dataDescription,
+      },
+    }),
   })
 
-  // Start exploration automatically on mount
-  useState(() => {
-    if (messages.length === 0) {
-      append({ role: "user", content: question })
+  // Start exploration on mount
+  useEffect(() => {
+    if (!hasStarted) {
+      setHasStarted(true)
+      sendMessage({ text: question })
+    }
+  }, [])
+
+  // Detect when exploration is complete
+  const isComplete = status !== "streaming" && messages.length > 0
+  const isExploring = status === "streaming"
+
+  // Notify parent when complete
+  useEffect(() => {
+    if (isComplete && messages.length > 0) {
+      const lastMessage = messages[messages.length - 1]
+      if (lastMessage.role === "assistant") {
+        const textParts = (lastMessage as any).parts?.filter((p: any) => p.type === "text") || []
+        const content = textParts.map((p: any) => p.text).join("")
+        if (content) {
+          onExplorationComplete?.(content)
+        }
+      }
+    }
+  }, [isComplete, messages])
+
+  // Extract all flow items (text and tools) from messages
+  const flowItems: Array<{
+    type: "text" | "tool"
+    id: string
+    data: any
+  }> = []
+
+  messages.forEach((message) => {
+    const parts = (message as any).parts || []
+
+    // Add tool calls
+    parts.forEach((part: any, partIndex: number) => {
+      if (part.type?.startsWith("tool-")) {
+        flowItems.push({
+          type: "tool",
+          id: `tool-${message.id}-${partIndex}`,
+          data: part as ToolUIPart,
+        })
+      }
+    })
+
+    // Add text content
+    const textParts = parts.filter((p: any) => p.type === "text")
+    const hasTextContent = textParts.length > 0
+
+    if (hasTextContent && message.role === "assistant") {
+      flowItems.push({
+        type: "text",
+        id: `text-${message.id}`,
+        data: {
+          content: textParts.map((p: any) => p.text).join(""),
+        },
+      })
     }
   })
+
+  const toolCallCount = flowItems.filter((item) => item.type === "tool").length
 
   return (
     <div className="space-y-4">
       <div className="exploration-stream space-y-3">
-        {messages.map((message: any, messageIdx: number) => (
-          <div key={message.id}>
-            {/* AI thinking/text */}
-            {message.content && (
-              <Card>
+        {flowItems.map((item) => {
+          if (item.type === "tool") {
+            return <ToolCallDisplay key={item.id} tool={item.data} />
+          } else {
+            return (
+              <Card key={item.id}>
                 <CardContent className="pt-6">
                   <div className="flex items-start gap-3">
                     <div className="text-2xl">💭</div>
                     <div className="flex-1">
                       <p className="text-sm text-muted-foreground whitespace-pre-wrap">
-                        {message.content}
+                        {item.data.content}
                       </p>
                     </div>
                   </div>
                 </CardContent>
               </Card>
-            )}
-
-            {/* Tool calls with real-time status */}
-            {message.toolInvocations?.map((tool: any, toolIdx: number) => (
-              <ToolCallDisplay key={`${messageIdx}-${toolIdx}`} tool={tool} />
-            ))}
-          </div>
-        ))}
+            )
+          }
+        })}
 
         {/* Loading indicator */}
-        {isLoading && !isExplorationComplete && (
+        {isExploring && (
           <Card>
             <CardContent className="pt-6">
               <div className="flex items-center gap-3">
@@ -109,7 +156,7 @@ export function AgenticExplorer({
       </div>
 
       {/* Exploration complete state */}
-      {isExplorationComplete && (
+      {isComplete && (
         <Card className="border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-green-700 dark:text-green-400">
@@ -119,10 +166,7 @@ export function AgenticExplorer({
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-center gap-4 text-sm">
-              <Badge variant="secondary">
-                {messages[messages.length - 1]?.toolInvocations?.length || 0} queries
-                executed
-              </Badge>
+              <Badge variant="secondary">{toolCallCount} queries executed</Badge>
             </div>
 
             {onGenerateReport && (
@@ -138,16 +182,19 @@ export function AgenticExplorer({
 }
 
 interface ToolCallDisplayProps {
-  tool: any
+  tool: ToolUIPart
 }
 
 function ToolCallDisplay({ tool }: ToolCallDisplayProps) {
   const [isOpen, setIsOpen] = useState(true)
 
-  // Tool status
-  const isExecuting = tool.state === "call"
-  const isComplete = tool.state === "result"
-  const hasError = isComplete && tool.result?.success === false
+  const isExecuting = tool.state === "input-streaming" || tool.state === "input-available"
+  const isComplete = tool.state === "output-available"
+  const hasError = tool.state === "output-error"
+
+  // Extract tool name from type (e.g., "tool-executeSQLQuery" -> "SQL Query")
+  const toolName = tool.type.replace("tool-", "")
+  const displayName = toolName === "executeSQLQuery" ? "SQL Query" : toolName
 
   return (
     <Card className={hasError ? "border-red-200 dark:border-red-800" : ""}>
@@ -156,22 +203,16 @@ function ToolCallDisplay({ tool }: ToolCallDisplayProps) {
           <CardHeader className="cursor-pointer hover:bg-muted/50 transition-colors">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                {isOpen ? (
-                  <ChevronDown className="h-4 w-4" />
-                ) : (
-                  <ChevronRight className="h-4 w-4" />
-                )}
+                {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                 <Database className="h-4 w-4 text-blue-600" />
-                <CardTitle className="text-sm font-medium">
-                  {tool.toolName === "executeSQLQuery" ? "SQL Query" : tool.toolName}
-                </CardTitle>
+                <CardTitle className="text-sm font-medium">{displayName}</CardTitle>
                 {isExecuting && (
                   <Badge variant="outline" className="ml-2">
                     <Loader2 className="h-3 w-3 animate-spin mr-1" />
                     Executing...
                   </Badge>
                 )}
-                {isComplete && !hasError && (
+                {isComplete && (
                   <Badge variant="outline" className="ml-2 text-green-600 border-green-600">
                     <CheckCircle2 className="h-3 w-3 mr-1" />
                     Complete
@@ -190,70 +231,85 @@ function ToolCallDisplay({ tool }: ToolCallDisplayProps) {
 
         <CollapsibleContent>
           <CardContent className="space-y-3">
-            {/* Tool arguments */}
-            {tool.args && (
+            {/* Tool input */}
+            {tool.input && (
               <div className="space-y-2">
-                {tool.args.reason && (
+                {tool.input.reason && (
                   <div>
                     <p className="text-xs font-medium text-muted-foreground mb-1">Reason:</p>
-                    <p className="text-sm">{tool.args.reason}</p>
+                    <p className="text-sm">{tool.input.reason}</p>
                   </div>
                 )}
-                {tool.args.query && (
+                {tool.input.query && (
                   <div>
                     <p className="text-xs font-medium text-muted-foreground mb-1">Query:</p>
                     <pre className="text-xs bg-muted p-3 rounded-md overflow-x-auto">
-                      <code>{tool.args.query}</code>
+                      <code>{tool.input.query}</code>
                     </pre>
                   </div>
                 )}
               </div>
             )}
 
-            {/* Tool result */}
-            {isComplete && tool.result && (
+            {/* Tool output */}
+            {tool.output && (
               <div className="space-y-2">
                 {hasError ? (
                   <div className="bg-red-50 dark:bg-red-950 p-3 rounded-md">
                     <p className="text-sm text-red-800 dark:text-red-200 font-medium">
-                      Error: {tool.result.error}
+                      Error: {tool.errorText || tool.output.error || "Unknown error"}
                     </p>
-                    {tool.result.hint && (
+                    {tool.output.hint && (
                       <p className="text-xs text-red-700 dark:text-red-300 mt-2">
-                        💡 Hint: {tool.result.hint}
+                        💡 Hint: {tool.output.hint}
                       </p>
                     )}
                   </div>
-                ) : (
+                ) : tool.output.success !== false ? (
                   <div>
                     <p className="text-xs font-medium text-muted-foreground mb-1">Result:</p>
                     <div className="bg-muted p-3 rounded-md">
-                      <p className="text-xs text-muted-foreground mb-2">
-                        {tool.result.data?.rowCount || 0} rows returned in{" "}
-                        {tool.result.data?.executionTimeMs || 0}ms
-                      </p>
-                      {tool.result.data && tool.result.data.rows.length > 0 && (
-                        <div className="overflow-x-auto max-h-48 overflow-y-auto">
-                          <pre className="text-xs">
-                            <code>
-                              {JSON.stringify(
-                                tool.result.data.rows.slice(0, 5).map((row: any[]) => {
-                                  const obj: Record<string, any> = {}
-                                  tool.result.data.columns.forEach((col: string, idx: number) => {
-                                    obj[col] = row[idx]
-                                  })
-                                  return obj
-                                }),
-                                null,
-                                2,
-                              )}
-                              {tool.result.data.rows.length > 5 &&
-                                `\n... ${tool.result.data.rows.length - 5} more rows`}
-                            </code>
-                          </pre>
-                        </div>
+                      {tool.output.data && (
+                        <>
+                          <p className="text-xs text-muted-foreground mb-2">
+                            {tool.output.data.rowCount || 0} rows returned in{" "}
+                            {tool.output.data.executionTimeMs || 0}ms
+                          </p>
+                          {tool.output.data.rows && tool.output.data.rows.length > 0 && (
+                            <div className="overflow-x-auto max-h-48 overflow-y-auto">
+                              <pre className="text-xs">
+                                <code>
+                                  {JSON.stringify(
+                                    tool.output.data.rows.slice(0, 5).map((row: any[]) => {
+                                      const obj: Record<string, any> = {}
+                                      tool.output.data.columns.forEach((col: string, idx: number) => {
+                                        obj[col] = row[idx]
+                                      })
+                                      return obj
+                                    }),
+                                    null,
+                                    2,
+                                  )}
+                                  {tool.output.data.rows.length > 5 &&
+                                    `\n... ${tool.output.data.rows.length - 5} more rows`}
+                                </code>
+                              </pre>
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
+                  </div>
+                ) : (
+                  <div className="bg-red-50 dark:bg-red-950 p-3 rounded-md">
+                    <p className="text-sm text-red-800 dark:text-red-200 font-medium">
+                      Error: {tool.output.error}
+                    </p>
+                    {tool.output.hint && (
+                      <p className="text-xs text-red-700 dark:text-red-300 mt-2">
+                        💡 Hint: {tool.output.hint}
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
