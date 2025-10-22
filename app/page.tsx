@@ -12,6 +12,7 @@ import type { AsyncDuckDB } from "@duckdb/duckdb-wasm"
 import type { SQLResult, ColumnInfo, ChartSpec, Plan } from "@/lib/schemas"
 import { PanelGroup, Panel, PanelResizeHandle, ImperativePanelHandle } from "react-resizable-panels"
 import { ChevronLeft, ChevronRight } from "lucide-react"
+import { Button } from "@/components/ui/button"
 
 interface SQLHistoryItem {
   sql: string
@@ -34,6 +35,7 @@ export default function Home() {
   // State management
   const [db, setDb] = useState<AsyncDuckDB | null>(null)
   const [fileName, setFileName] = useState<string | null>(null)
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [dataDescription, setDataDescription] = useState("")
   const [messages, setMessages] = useState<Message[]>([])
@@ -57,6 +59,11 @@ export default function Home() {
       .catch((err) => {
         console.error("[v0] Failed to initialize DuckDB:", err)
       })
+  }, [])
+
+  // Handle file selection (first step)
+  const handleFileSelected = useCallback((file: File) => {
+    setSelectedFile(file)
   }, [])
 
   // Handle file upload
@@ -91,12 +98,38 @@ export default function Home() {
         const preview = await executeQuery(db, "SELECT * FROM t_parsed", 30000, 100)
         setPreviewData(preview)
 
-        // Add system message
+        // Generate AI greeting message
+        let greetingContent = `File "${file.name}" loaded successfully! ${count.toLocaleString()} rows, ${schemaInfo.length} columns. What would you like to analyze?`
+
+        try {
+          const greetingResponse = await fetch("/api/chat-response", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              messageType: "greeting",
+              context: {
+                fileName: file.name,
+                rowCount: count,
+                schema: schemaInfo,
+                dataDescription: dataDescription || undefined,
+              },
+            }),
+          })
+
+          if (greetingResponse.ok) {
+            const greetingData = await greetingResponse.json()
+            greetingContent = greetingData.message
+          }
+        } catch (error) {
+          console.error("[v0] Failed to generate AI greeting, using fallback:", error)
+        }
+
+        // Add system message with AI-generated or fallback content
         setMessages([
           {
             id: Date.now().toString(),
             role: "assistant",
-            content: `File "${file.name}" loaded successfully! ${count.toLocaleString()} rows, ${schemaInfo.length} columns. What would you like to analyze?`,
+            content: greetingContent,
           },
         ])
       } catch (err) {
@@ -112,8 +145,15 @@ export default function Home() {
         setIsLoading(false)
       }
     },
-    [db],
+    [db, dataDescription],
   )
+
+  // Handle proceeding with analysis (second step)
+  const handleProceedWithFile = useCallback(() => {
+    if (selectedFile) {
+      handleFileLoaded(selectedFile)
+    }
+  }, [selectedFile, handleFileLoaded])
 
   // Handle sending a message
   const handleSendMessage = useCallback(
@@ -129,38 +169,118 @@ export default function Home() {
       setMessages((prev) => [...prev, userMessage])
 
       try {
-        // Get sample for LLM context
-        const sample = await getSample(db, "t_parsed", 5)
+        // Step 1: Classify intent (chat vs analysis)
+        const conversationHistory = messages.slice(-6).map((msg) => ({
+          role: msg.role,
+          content: msg.content,
+        }))
 
-        // Call AI API
-        const response = await fetch("/api/ask", {
+        const intentResponse = await fetch("/api/intent", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            question: message,
-            schema,
-            sample,
-            rowCount,
-            dataDescription: dataDescription || undefined,
+            message,
+            conversationHistory,
+            dataContext: {
+              schemaColumns: schema.map((col) => col.name),
+              dataDescription: dataDescription || undefined,
+            },
           }),
         })
 
-        if (!response.ok) {
-          throw new Error("Failed to get AI response")
-        }
+        const intentData = await intentResponse.json()
+        const intent = intentData.intent || "analysis" // Default to analysis if classification fails
 
-        const data = await response.json()
-        const plan: Plan = data.plan
+        console.log(`[intent] Classified as: ${intent} - ${intentData.reasoning}`)
 
-        // Add assistant message with plan
-        const assistantMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          role: "assistant",
-          content: "I've created an analysis plan for you. Please review and approve it to proceed.",
-          plan,
-          planStatus: "pending",
+        // Step 2: Route based on intent
+        if (intent === "chat") {
+          // Handle conversational message
+          const chatResponse = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              message,
+              conversationHistory,
+              dataContext: {
+                fileName,
+                rowCount,
+                columnCount: schema.length,
+                schemaColumns: schema.map((col) => col.name),
+                dataDescription: dataDescription || undefined,
+              },
+            }),
+          })
+
+          if (!chatResponse.ok) {
+            throw new Error("Failed to get chat response")
+          }
+
+          const chatData = await chatResponse.json()
+
+          const assistantMessage: Message = {
+            id: (Date.now() + 1).toString(),
+            role: "assistant",
+            content: chatData.message,
+          }
+          setMessages((prev) => [...prev, assistantMessage])
+        } else {
+          // Handle analysis request
+          const sample = await getSample(db, "t_parsed", 5)
+
+          const response = await fetch("/api/ask", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              question: message,
+              schema,
+              sample,
+              rowCount,
+              dataDescription: dataDescription || undefined,
+            }),
+          })
+
+          if (!response.ok) {
+            throw new Error("Failed to get AI response")
+          }
+
+          const data = await response.json()
+          const plan: Plan = data.plan
+
+          // Generate AI plan introduction
+          let planIntroContent = "I've created an analysis plan for you. Please review and approve it to proceed."
+
+          try {
+            const introResponse = await fetch("/api/chat-response", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                messageType: "plan_intro",
+                context: {
+                  userQuestion: message,
+                  plan: plan,
+                },
+              }),
+            })
+
+            if (introResponse.ok) {
+              const introData = await introResponse.json()
+              planIntroContent = introData.message
+            }
+          } catch (error) {
+            console.error("[v0] Failed to generate AI plan intro, using fallback:", error)
+          }
+
+          // Add assistant message with plan and AI-generated introduction
+          const assistantMessage: Message = {
+            id: (Date.now() + 1).toString(),
+            role: "assistant",
+            content: planIntroContent,
+            plan,
+            planStatus: "pending",
+          }
+          setMessages((prev) => [...prev, assistantMessage])
         }
-        setMessages((prev) => [...prev, assistantMessage])
       } catch (err) {
         console.error("[v0] Error sending message:", err)
         const errorMessage: Message = {
@@ -171,7 +291,7 @@ export default function Home() {
         setMessages((prev) => [...prev, errorMessage])
       }
     },
-    [db, schema, rowCount, dataDescription],
+    [db, schema, rowCount, dataDescription, messages, fileName],
   )
 
   // Handle plan approval with sequential execution
@@ -187,10 +307,21 @@ export default function Home() {
 
       const totalSteps = message.plan.steps.length
 
+      // Track executed steps and charts for completion message
+      const executedSteps: string[] = []
+      const chartTypes: string[] = []
+
+      // Find original user question
+      const userMessages = messages.filter((m) => m.role === "user")
+      const originalQuestion = userMessages[userMessages.length - 1]?.content || "your analysis"
+
       // Execute steps sequentially with delays for natural flow
       for (let i = 0; i < message.plan.steps.length; i++) {
         const step = message.plan.steps[i]
         const stepNumber = step.step
+
+        // Track this step
+        executedSteps.push(step.description)
 
         // Add a small delay before each step for natural pacing
         if (i > 0) {
@@ -226,6 +357,10 @@ export default function Home() {
 
         // Add chart if present
         if (step.chartSpec) {
+          // Track chart type
+          const chartType = step.chartSpec.mark?.type || step.chartSpec.mark || "chart"
+          chartTypes.push(typeof chartType === "string" ? chartType : "visualization")
+
           const chartMessage: Message = {
             id: `${Date.now()}-chart-${stepNumber}`,
             role: "assistant",
@@ -249,11 +384,36 @@ export default function Home() {
         }
       }
 
+      // Generate AI completion message with suggestions
+      let completionContent = `Analysis complete! All ${totalSteps} steps have been executed successfully. You can view the results in the Preview and Charts tabs.`
+
+      try {
+        const completionResponse = await fetch("/api/chat-response", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            messageType: "completion",
+            context: {
+              executedSteps,
+              chartTypes,
+              originalQuestion,
+            },
+          }),
+        })
+
+        if (completionResponse.ok) {
+          const completionData = await completionResponse.json()
+          completionContent = completionData.message
+        }
+      } catch (error) {
+        console.error("[v0] Failed to generate AI completion message, using fallback:", error)
+      }
+
       // Add completion message
       const completionMessage: Message = {
         id: `${Date.now()}-complete`,
         role: "assistant",
-        content: `Analysis complete! All ${totalSteps} steps have been executed successfully. You can view the results in the Preview and Charts tabs.`,
+        content: completionContent,
       }
       setMessages((prev) => [...prev, completionMessage])
     },
@@ -261,16 +421,48 @@ export default function Home() {
   )
 
   // Handle plan rejection
-  const handleRejectPlan = useCallback((messageId: string) => {
-    setMessages((prev) => prev.map((msg) => (msg.id === messageId ? { ...msg, planStatus: "rejected" as const } : msg)))
+  const handleRejectPlan = useCallback(
+    async (messageId: string) => {
+      setMessages((prev) =>
+        prev.map((msg) => (msg.id === messageId ? { ...msg, planStatus: "rejected" as const } : msg)),
+      )
 
-    const rejectMessage: Message = {
-      id: Date.now().toString(),
-      role: "assistant",
-      content: "Plan rejected. Please ask your question differently or provide more details.",
-    }
-    setMessages((prev) => [...prev, rejectMessage])
-  }, [])
+      // Find the rejected plan for context
+      const rejectedMessage = messages.find((m) => m.id === messageId)
+      const rejectedPlan = rejectedMessage?.plan
+
+      // Generate AI rejection message
+      let rejectContent = "Plan rejected. Please ask your question differently or provide more details."
+
+      try {
+        const rejectResponse = await fetch("/api/chat-response", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            messageType: "rejection",
+            context: {
+              rejectedPlan,
+            },
+          }),
+        })
+
+        if (rejectResponse.ok) {
+          const rejectData = await rejectResponse.json()
+          rejectContent = rejectData.message
+        }
+      } catch (error) {
+        console.error("[v0] Failed to generate AI rejection message, using fallback:", error)
+      }
+
+      const rejectMessage: Message = {
+        id: Date.now().toString(),
+        role: "assistant",
+        content: rejectContent,
+      }
+      setMessages((prev) => [...prev, rejectMessage])
+    },
+    [messages],
+  )
 
   // Handle SQL execution
   const handleExecuteSQL = useCallback(
@@ -395,12 +587,23 @@ export default function Home() {
                   placeholder="Provide context about your data (e.g., 'This is sales data from Q4 2024' or 'Customer demographics from our CRM system')"
                   value={dataDescription}
                   onChange={(e) => setDataDescription(e.target.value)}
+                  disabled={isLoading}
                 />
                 <p className="text-xs text-muted-foreground">
                   This information will help the AI better understand and analyze your data.
                 </p>
               </div>
-              <UploadZone onFileLoaded={handleFileLoaded} disabled={isLoading} />
+              <UploadZone
+                onFileLoaded={handleFileLoaded}
+                onFileSelected={handleFileSelected}
+                selectedFile={selectedFile}
+                disabled={isLoading}
+              />
+              {selectedFile && (
+                <Button onClick={handleProceedWithFile} disabled={isLoading} size="lg" className="w-full">
+                  {isLoading ? "Loading data..." : "Proceed to Analysis"}
+                </Button>
+              )}
             </div>
           </div>
         ) : (

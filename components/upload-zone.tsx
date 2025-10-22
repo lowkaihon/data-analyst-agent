@@ -9,13 +9,15 @@ import { Card } from "@/components/ui/card"
 
 interface UploadZoneProps {
   onFileLoaded: (file: File) => void
+  onFileSelected?: (file: File) => void
+  selectedFile?: File | null
   disabled?: boolean
 }
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024 // 20MB
 const MAX_COLUMNS = 200
 
-export function UploadZone({ onFileLoaded, disabled }: UploadZoneProps) {
+export function UploadZone({ onFileLoaded, onFileSelected, selectedFile, disabled }: UploadZoneProps) {
   const [isDragging, setIsDragging] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -58,9 +60,15 @@ export function UploadZone({ onFileLoaded, disabled }: UploadZoneProps) {
         return
       }
 
-      onFileLoaded(file)
+      // If onFileSelected is provided, use two-step flow
+      // Otherwise, use immediate loading (backward compatibility)
+      if (onFileSelected) {
+        onFileSelected(file)
+      } else {
+        onFileLoaded(file)
+      }
     },
-    [validateFile, onFileLoaded],
+    [validateFile, onFileLoaded, onFileSelected],
   )
 
   const handleDrop = useCallback(
@@ -118,12 +126,21 @@ export function UploadZone({ onFileLoaded, disabled }: UploadZoneProps) {
         </div>
 
         <div className="flex flex-col gap-2 w-full max-w-xs">
-          <Button variant="outline" disabled={disabled} asChild>
-            <label className="cursor-pointer">
-              Choose File
-              <input type="file" accept=".csv" className="hidden" onChange={handleFileInput} disabled={disabled} />
-            </label>
-          </Button>
+          {selectedFile ? (
+            <div className="text-sm p-3 bg-primary/10 rounded border border-primary/20">
+              <p className="font-medium text-primary">Selected: {selectedFile.name}</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
+              </p>
+            </div>
+          ) : (
+            <Button variant="outline" disabled={disabled} asChild>
+              <label className="cursor-pointer">
+                Choose File
+                <input type="file" accept=".csv" className="hidden" onChange={handleFileInput} disabled={disabled} />
+              </label>
+            </Button>
+          )}
 
           {error && <div className="text-sm text-destructive bg-destructive/10 p-2 rounded">{error}</div>}
         </div>
