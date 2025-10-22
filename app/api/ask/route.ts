@@ -43,7 +43,12 @@ ${JSON.stringify(sample, null, 2)}
 
 IMPORTANT RULES:
 1. Only generate READ-ONLY SQL queries (SELECT, WITH, PRAGMA)
-2. Use DuckDB SQL syntax
+2. Use DuckDB SQL syntax - IMPORTANT DuckDB-specific notes:
+   - For custom ordering, use CASE statements instead of FIELD()
+   - Example: ORDER BY CASE WHEN month = 'jan' THEN 1 WHEN month = 'feb' THEN 2 ... END
+   - String concatenation: use || instead of CONCAT()
+   - Date functions: use strftime() for date formatting
+   - Regex: use regexp_matches() instead of REGEXP
 3. The table name is "t_parsed"
 4. Keep queries efficient and add LIMIT clauses
 5. NEVER add semicolons at the end of SQL queries - the system will add them automatically
@@ -85,7 +90,19 @@ Example of a well-styled bar chart (NOTE: no data field):
   }
 }
 
-Create a step-by-step analysis plan to answer the user's question.`
+ANALYSIS PHILOSOPHY - Focus on Actionable Insights:
+Your analysis should go beyond descriptive statistics to deliver actionable insights. Structure your plan to answer:
+1. WHAT is happening? (descriptive - trends, patterns, distributions)
+2. WHY is it happening? (diagnostic - correlations, segmentation, comparisons)
+3. WHAT should be done? (prescriptive - opportunities, priorities, recommendations)
+
+Design your analysis steps to:
+- Identify patterns and anomalies that indicate opportunities or problems
+- Compare segments, time periods, or categories to find disparities
+- Quantify impact and prioritize by significance
+- Surface insights that connect directly to decisions and actions
+
+Create a step-by-step analysis plan to answer the user's question. Each step should build toward actionable insights.`
 
     const result = await generateObject({
       model: openai("gpt-4o"),

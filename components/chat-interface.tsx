@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card } from "@/components/ui/card"
 import { Send, User, Bot, FileText, Loader2 } from "lucide-react"
+import { Loader } from "@/components/ai-elements/loader"
 import { PlanCard } from "./plan-card"
 import { SQLCard } from "./sql-card"
 import { ChartCard } from "./chart-card"
@@ -24,6 +25,7 @@ export interface Message {
   stepNumber?: number
   totalSteps?: number
   isExecuting?: boolean
+  isThinking?: boolean
 }
 
 interface ChatInterfaceProps {
@@ -94,7 +96,16 @@ export function ChatInterface({
             </div>
 
             <div className="flex-1 space-y-3">
-              {message.content && !message.stepNumber && (
+              {message.isThinking && (
+                <Card className="p-3">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader size={14} />
+                    <span>Thinking...</span>
+                  </div>
+                </Card>
+              )}
+
+              {message.content && !message.stepNumber && !message.isThinking && (
                 <Card className="p-3">
                   <p className="text-sm whitespace-pre-wrap">{message.content}</p>
                 </Card>
@@ -119,7 +130,15 @@ export function ChatInterface({
                 />
               )}
 
-              {message.sql && <SQLCard sql={message.sql} onExecute={onExecuteSQL} stepNumber={message.stepNumber} autoExecute />}
+              {message.sql && (
+                <SQLCard
+                  sql={message.sql}
+                  onExecute={onExecuteSQL}
+                  stepNumber={message.stepNumber}
+                  autoExecute={false}
+                  initialStatus="success"
+                />
+              )}
 
               {message.chart && <ChartCard spec={message.chart} title={message.content} />}
             </div>

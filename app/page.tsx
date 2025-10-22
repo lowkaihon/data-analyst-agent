@@ -176,6 +176,16 @@ export default function Home() {
       }
       setMessages((prev) => [...prev, userMessage])
 
+      // Add thinking indicator
+      const thinkingMessageId = (Date.now() + 1).toString()
+      const thinkingMessage: Message = {
+        id: thinkingMessageId,
+        role: "assistant",
+        content: "",
+        isThinking: true,
+      }
+      setMessages((prev) => [...prev, thinkingMessage])
+
       try {
         // Step 1: Classify intent (chat vs analysis)
         const conversationHistory = messages.slice(-6).map((msg) => ({
@@ -226,12 +236,18 @@ export default function Home() {
 
           const chatData = await chatResponse.json()
 
-          const assistantMessage: Message = {
-            id: (Date.now() + 1).toString(),
-            role: "assistant",
-            content: chatData.message,
-          }
-          setMessages((prev) => [...prev, assistantMessage])
+          // Remove thinking indicator and add actual response
+          setMessages((prev) => {
+            const filtered = prev.filter((msg) => msg.id !== thinkingMessageId)
+            return [
+              ...filtered,
+              {
+                id: (Date.now() + 2).toString(),
+                role: "assistant",
+                content: chatData.message,
+              },
+            ]
+          })
         } else {
           // Handle analysis request
           const sample = await getSample(db, "t_parsed", 5)
@@ -279,27 +295,88 @@ export default function Home() {
             console.error("[v0] Failed to generate AI plan intro, using fallback:", error)
           }
 
-          // Add assistant message with plan and AI-generated introduction
-          const assistantMessage: Message = {
-            id: (Date.now() + 1).toString(),
-            role: "assistant",
-            content: planIntroContent,
-            plan,
-            planStatus: "pending",
-          }
-          setMessages((prev) => [...prev, assistantMessage])
+          // Remove thinking indicator and add assistant message with plan
+          setMessages((prev) => {
+            const filtered = prev.filter((msg) => msg.id !== thinkingMessageId)
+            return [
+              ...filtered,
+              {
+                id: (Date.now() + 2).toString(),
+                role: "assistant",
+                content: planIntroContent,
+                plan,
+                planStatus: "pending",
+              },
+            ]
+          })
         }
       } catch (err) {
         console.error("[v0] Error sending message:", err)
-        const errorMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          role: "assistant",
-          content: `Error: ${err instanceof Error ? err.message : "Failed to process your question"}`,
-        }
-        setMessages((prev) => [...prev, errorMessage])
+        // Remove thinking indicator and show error
+        setMessages((prev) => {
+          const filtered = prev.filter((msg) => msg.id !== thinkingMessageId)
+          return [
+            ...filtered,
+            {
+              id: (Date.now() + 2).toString(),
+              role: "assistant",
+              content: `Error: ${err instanceof Error ? err.message : "Failed to process your question"}`,
+            },
+          ]
+        })
       }
     },
     [db, schema, rowCount, dataDescription, messages, fileName],
+  )
+
+  // Handle SQL execution
+  const handleExecuteSQL = useCallback(
+    async (sql: string): Promise<SQLHistoryItem> => {
+      if (!db) throw new Error("Database not initialized")
+
+      try {
+        // Validate SQL
+        const validatedSQL = validateSQL(sql)
+
+        // Execute query
+        const result = await executeQuery(db, validatedSQL, 30000, 1000)
+
+        // Update preview with results
+        setPreviewData(result)
+
+        // Create history item
+        const historyItem: SQLHistoryItem = {
+          sql: validatedSQL,
+          timestamp: new Date(),
+          success: true,
+          executionTimeMs: result.executionTimeMs,
+          result: {
+            columns: result.columns,
+            rows: result.rows,
+          },
+        }
+
+        // Add to history with execution time and results
+        setSqlHistory((prev) => [...prev, historyItem])
+
+        // Return the result directly so caller doesn't need to rely on state
+        return historyItem
+      } catch (err) {
+        // Create failed history item
+        const failedItem: SQLHistoryItem = {
+          sql,
+          timestamp: new Date(),
+          success: false,
+        }
+
+        // Add to history as failed
+        setSqlHistory((prev) => [...prev, failedItem])
+
+        // Return the failed item
+        return failedItem
+      }
+    },
+    [db],
   )
 
   // Handle plan approval with sequential execution
@@ -353,37 +430,32 @@ export default function Home() {
         // Mark step as complete and add SQL if present
         let sqlResult: SQLHistoryItem | undefined
         if (step.sql) {
-          // Track current SQL history length before execution
-          const expectedHistoryLength = sqlHistoryRef.current.length + 1
+          // Execute SQL directly first to ensure we have results before rendering
+          try {
+            console.log("[v0] Executing SQL for step", stepNumber, ":", step.sql)
+            // Get the result directly from the function instead of relying on state
+            sqlResult = await handleExecuteSQL(step.sql)
 
-          // Update step header to not executing
+            if (sqlResult?.success) {
+              console.log("[v0] SQL executed successfully with", sqlResult.result?.rows.length || 0, "rows")
+            } else {
+              console.error("[v0] SQL execution failed")
+            }
+          } catch (err) {
+            console.error("[v0] Error executing SQL:", err)
+            sqlResult = {
+              sql: step.sql,
+              timestamp: new Date(),
+              success: false,
+            }
+          }
+
+          // Update step header to show SQL (now with results already in history)
           setMessages((prev) =>
             prev.map((msg) =>
               msg.id === stepHeaderMessage.id ? { ...msg, isExecuting: false, sql: step.sql } : msg,
             ),
           )
-
-          // Wait for SQL execution to complete (auto-executes via SQLCard)
-          // Poll sqlHistoryRef until it updates with the new result
-          const maxWaitTime = 5000 // 5 seconds max
-          const pollInterval = 100 // Check every 100ms
-          let waited = 0
-
-          while (waited < maxWaitTime) {
-            await new Promise((resolve) => setTimeout(resolve, pollInterval))
-            waited += pollInterval
-
-            // Check if SQL has executed and been added to history (use ref for latest value)
-            if (sqlHistoryRef.current.length >= expectedHistoryLength) {
-              sqlResult = sqlHistoryRef.current[expectedHistoryLength - 1]
-              break
-            }
-          }
-
-          // If we didn't get a result, log a warning but continue
-          if (!sqlResult) {
-            console.warn("[v0] SQL execution timed out or failed, chart may not have data")
-          }
         }
 
         // Add chart if present
@@ -405,15 +477,56 @@ export default function Home() {
               return dataPoint
             })
 
+            console.log("[v0] ========== CHART DATA INJECTION ==========")
+            console.log("[v0] Step", stepNumber, "- SQL:", step.sql)
+            console.log("[v0] SQL Result Columns:", sqlResult.result.columns)
+            console.log("[v0] SQL Result Raw Rows (first 3):", sqlResult.result.rows.slice(0, 3))
+            console.log("[v0] Number of data points:", chartData.length)
+            console.log("[v0] First 3 data points after mapping:", chartData.slice(0, 3))
+            console.log("[v0] Chart spec encoding:", step.chartSpec.encoding)
+
+            // Check if any data values are undefined
+            if (chartData.length > 0) {
+              const firstPoint = chartData[0]
+              const undefinedFields = Object.entries(firstPoint)
+                .filter(([_, value]) => value === undefined)
+                .map(([key, _]) => key)
+              if (undefinedFields.length > 0) {
+                console.error("[v0] ⚠️ UNDEFINED VALUES: These fields have undefined values:", undefinedFields)
+              }
+            }
+
+            // Check if chart spec fields match SQL columns
+            const chartFields = new Set<string>()
+            if (step.chartSpec.encoding) {
+              Object.values(step.chartSpec.encoding).forEach((enc: any) => {
+                if (enc?.field) chartFields.add(enc.field)
+              })
+            }
+            const sqlColumns = new Set(sqlResult.result.columns)
+            const missingFields = Array.from(chartFields).filter((f) => !sqlColumns.has(f))
+            if (missingFields.length > 0) {
+              console.error("[v0] ⚠️ FIELD MISMATCH: Chart references fields not in SQL:", missingFields)
+              console.error("[v0] Available SQL columns:", Array.from(sqlColumns))
+              console.error("[v0] Chart spec fields:", Array.from(chartFields))
+            }
+
+            console.log("[v0] ==========================================")
+
+
             // Inject data into chart spec
             enrichedChartSpec = {
               ...step.chartSpec,
               data: { values: chartData },
             }
           } else if (step.sql) {
-            // SQL was supposed to run but failed or timed out
+            // SQL was supposed to run but failed or no result available
             console.error("[v0] Cannot create chart - SQL execution failed or no result available")
+            console.error("[v0] sqlResult:", sqlResult)
             // Still create chart but it will fail to render without data
+          } else {
+            // No SQL provided, chart spec might have inline data
+            console.log("[v0] Creating chart without SQL data injection")
           }
 
           const chartMessage: Message = {
@@ -472,7 +585,7 @@ export default function Home() {
       }
       setMessages((prev) => [...prev, completionMessage])
     },
-    [messages],
+    [messages, handleExecuteSQL],
   )
 
   // Handle plan rejection
@@ -517,51 +630,6 @@ export default function Home() {
       setMessages((prev) => [...prev, rejectMessage])
     },
     [messages],
-  )
-
-  // Handle SQL execution
-  const handleExecuteSQL = useCallback(
-    async (sql: string) => {
-      if (!db) throw new Error("Database not initialized")
-
-      try {
-        // Validate SQL
-        const validatedSQL = validateSQL(sql)
-
-        // Execute query
-        const result = await executeQuery(db, validatedSQL, 30000, 1000)
-
-        // Update preview with results
-        setPreviewData(result)
-
-        // Add to history with execution time and results
-        setSqlHistory((prev) => [
-          ...prev,
-          {
-            sql: validatedSQL,
-            timestamp: new Date(),
-            success: true,
-            executionTimeMs: result.executionTimeMs,
-            result: {
-              columns: result.columns,
-              rows: result.rows,
-            },
-          },
-        ])
-      } catch (err) {
-        // Add to history as failed
-        setSqlHistory((prev) => [
-          ...prev,
-          {
-            sql,
-            timestamp: new Date(),
-            success: false,
-          },
-        ])
-        throw err
-      }
-    },
-    [db],
   )
 
   // Handle report content change
@@ -677,7 +745,9 @@ export default function Home() {
                 onSendMessage={handleSendMessage}
                 onApprovePlan={handleApprovePlan}
                 onRejectPlan={handleRejectPlan}
-                onExecuteSQL={handleExecuteSQL}
+                onExecuteSQL={async (sql) => {
+                  await handleExecuteSQL(sql)
+                }}
                 disabled={isLoading}
                 onGenerateReport={handleGenerateReport}
                 isGeneratingReport={isGeneratingReport}

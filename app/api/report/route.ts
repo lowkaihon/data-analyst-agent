@@ -35,7 +35,7 @@ export async function POST(req: Request) {
     }
 
     // Build context for report generation
-    const systemPrompt = `You are a data analyst creating a comprehensive markdown report.
+    const systemPrompt = `You are a data analyst creating a comprehensive markdown report focused on delivering ACTIONABLE INSIGHTS.
 
 Dataset Schema:
 ${schema.map((col) => `- ${col.name} (${col.type})`).join("\n")}
@@ -76,16 +76,48 @@ ${item.result.rows.length > 50 ? `\n(${item.result.rows.length - 50} more rows n
 
 ${charts.length > 0 ? `${charts.length} visualization(s) were created.` : "No visualizations created."}
 
-Create a professional markdown report that:
-1. Summarizes the analysis question
-2. Describes the methodology and queries used
-3. Presents key findings with data-backed insights using the ACTUAL DATA from the SQL results above
-4. Includes relevant statistics and patterns discovered from the data
-5. Provides actionable conclusions based on the findings
+Create a professional markdown report that delivers ACTIONABLE INSIGHTS:
 
-IMPORTANT: Use the actual numbers, values, and patterns from the SQL results shown above. Don't be generic - reference specific data points, trends, and insights from the results.
+CRITICAL - Actionable Insights Framework:
+An actionable insight must be:
+• Specific: Pinpoint distinct problems or opportunities, not vague observations
+• Measurable: Include concrete metrics that can be tracked
+• Relevant: Connect directly to business goals and decision-making
+• Timely: Provide context about urgency and timing
+• Achievable: Recommend realistic, implementable actions
 
-Use proper markdown formatting with headers, lists, and emphasis.`
+Report Structure:
+1. Executive Summary
+   - One-sentence answer to the analysis question
+   - 2-3 key actionable insights (what to do about the findings)
+
+2. Key Findings
+   - Present discoveries using ACTUAL DATA from SQL results
+   - For each finding, explain WHAT happened and WHY it matters
+   - Include specific numbers, percentages, trends, and comparisons
+   - Identify patterns, anomalies, and correlations
+
+3. Actionable Insights & Recommendations
+   For each major finding, provide:
+   - Clear insight statement (the "so what?")
+   - Specific recommended action (what to do)
+   - Expected impact (why this matters)
+   - Implementation priority (high/medium/low based on impact)
+   - Success metrics to track
+
+4. Methodology
+   - Briefly describe approach and queries used
+   - Note any limitations or data quality considerations
+
+IMPORTANT GUIDELINES:
+- Use actual numbers, values, and patterns from the SQL results - be specific, not generic
+- Focus on insights that bridge analysis to action
+- Avoid stating obvious facts without interpretation
+- Connect findings to business decisions
+- Prioritize recommendations by potential impact
+- Use clear, concise language that non-technical stakeholders can understand
+
+Use proper markdown formatting with headers, lists, bold for emphasis, and tables where appropriate.`
 
     const result = await generateText({
       model: openai("gpt-4o"),

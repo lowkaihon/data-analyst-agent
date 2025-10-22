@@ -3,7 +3,9 @@
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { Download, FileText, Loader2 } from "lucide-react"
+import { Download, FileText, Loader2, Eye, Edit } from "lucide-react"
+import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 
 interface ReportTabProps {
   initialContent?: string
@@ -21,6 +23,7 @@ export function ReportTab({
   isDataLoaded,
 }: ReportTabProps) {
   const [content, setContent] = useState(initialContent)
+  const [viewMode, setViewMode] = useState<"preview" | "edit">("preview")
 
   // Sync with initialContent when it changes
   useEffect(() => {
@@ -49,6 +52,26 @@ export function ReportTab({
       <div className="flex items-center justify-between">
         <h3 className="font-semibold">Analysis Report</h3>
         <div className="flex gap-2">
+          {content.trim() && (
+            <Button
+              onClick={() => setViewMode(viewMode === "preview" ? "edit" : "preview")}
+              size="sm"
+              variant="outline"
+              className="gap-2 bg-transparent"
+            >
+              {viewMode === "preview" ? (
+                <>
+                  <Edit className="h-4 w-4" />
+                  Edit
+                </>
+              ) : (
+                <>
+                  <Eye className="h-4 w-4" />
+                  Preview
+                </>
+              )}
+            </Button>
+          )}
           {onGenerateReport && (
             <Button
               onClick={onGenerateReport}
@@ -83,12 +106,20 @@ export function ReportTab({
         </div>
       </div>
 
-      <Textarea
-        value={content}
-        onChange={(e) => handleChange(e.target.value)}
-        placeholder="Generate a report using the AI, or write your own analysis here..."
-        className="flex-1 font-mono text-sm resize-none"
-      />
+      {viewMode === "edit" || !content.trim() ? (
+        <Textarea
+          value={content}
+          onChange={(e) => handleChange(e.target.value)}
+          placeholder="Generate a report using the AI, or write your own analysis here..."
+          className="flex-1 font-mono text-sm resize-none"
+        />
+      ) : (
+        <div className="flex-1 overflow-auto border rounded-md p-4 prose prose-sm max-w-none dark:prose-invert">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {content}
+          </ReactMarkdown>
+        </div>
+      )}
 
       {content && (
         <div className="text-xs text-muted-foreground">

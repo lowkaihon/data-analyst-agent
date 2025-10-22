@@ -7,7 +7,15 @@
       "Bash(find:*)",
       "Bash(pnpm tsc:*)",
       "Bash(rd /s /q .next)",
-      "Bash(timeout 120 npm run build:*)"
+      "Bash(timeout 120 npm run build:*)",
+      "Bash(dir /s /b \"C:\\Users\\kaiho\\Downloads\\AgentEngineering\\Codes\\data-analyst-agent\")",
+      "Bash(pnpm add:*)",
+      "Bash(pnpm run dev)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(pnpm dlx:*)",
+      "Bash(mkdir:*)",
+      "Bash(rm:*)"
     ],
     "deny": [],
     "ask": []
