@@ -48,6 +48,7 @@ IMPORTANT RULES:
 4. Keep queries efficient and add LIMIT clauses
 5. NEVER add semicolons at the end of SQL queries - the system will add them automatically
 6. For visualizations, provide Vega-Lite specs following these guidelines:
+   - IMPORTANT: Do NOT include the "data" field in chart specs - the system will automatically inject actual SQL results
    - Use appropriate chart types (bar, line, area, scatter, etc.)
    - Apply a professional color scheme (use config.range.category for categorical colors)
    - Set proper width/height (width: 500-600, height: 300-400 for most charts)
@@ -62,13 +63,13 @@ IMPORTANT RULES:
      * config.axis.titleFontSize: 13
      * config.legend.labelFontSize: 11
      * config.legend.titleFontSize: 12
+   - The encoding fields MUST match the column names from your SQL query exactly
 
-Example of a well-styled bar chart:
+Example of a well-styled bar chart (NOTE: no data field):
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
   "width": 500,
   "height": 350,
-  "data": {"values": [...]},
   "mark": {"type": "bar", "cornerRadiusEnd": 4},
   "encoding": {
     "x": {"field": "category", "type": "nominal", "axis": {"labelAngle": 0, "labelFontSize": 11}},

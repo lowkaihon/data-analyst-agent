@@ -54,6 +54,17 @@ export function ChartCard({ spec, title, description }: ChartCardProps) {
         theme: "latimes",
       }).catch((err) => {
         console.error("[v0] Vega-Lite rendering error:", err)
+        // Display error message in the container
+        if (containerRef.current) {
+          containerRef.current.innerHTML = `
+            <div style="display: flex; align-items: center; justify-content: center; height: 300px; color: #ef4444;">
+              <div style="text-align: center;">
+                <p style="font-weight: 600; margin-bottom: 8px;">Failed to render chart</p>
+                <p style="font-size: 14px; color: #64748b;">${err instanceof Error ? err.message : "Unknown error"}</p>
+              </div>
+            </div>
+          `
+        }
       })
     }
   }, [spec])

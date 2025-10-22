@@ -52,6 +52,14 @@ export default function Home() {
   const leftPanelRef = useRef<ImperativePanelHandle>(null)
   const rightPanelRef = useRef<ImperativePanelHandle>(null)
 
+  // Ref to track latest SQL history for async operations
+  const sqlHistoryRef = useRef<SQLHistoryItem[]>([])
+
+  // Keep ref in sync with state
+  useEffect(() => {
+    sqlHistoryRef.current = sqlHistory
+  }, [sqlHistory])
+
   // Initialize DuckDB on mount
   useEffect(() => {
     getDB()
@@ -343,7 +351,11 @@ export default function Home() {
         await new Promise((resolve) => setTimeout(resolve, 400))
 
         // Mark step as complete and add SQL if present
+        let sqlResult: SQLHistoryItem | undefined
         if (step.sql) {
+          // Track current SQL history length before execution
+          const expectedHistoryLength = sqlHistoryRef.current.length + 1
+
           // Update step header to not executing
           setMessages((prev) =>
             prev.map((msg) =>
@@ -352,7 +364,26 @@ export default function Home() {
           )
 
           // Wait for SQL execution to complete (auto-executes via SQLCard)
-          await new Promise((resolve) => setTimeout(resolve, 1200))
+          // Poll sqlHistoryRef until it updates with the new result
+          const maxWaitTime = 5000 // 5 seconds max
+          const pollInterval = 100 // Check every 100ms
+          let waited = 0
+
+          while (waited < maxWaitTime) {
+            await new Promise((resolve) => setTimeout(resolve, pollInterval))
+            waited += pollInterval
+
+            // Check if SQL has executed and been added to history (use ref for latest value)
+            if (sqlHistoryRef.current.length >= expectedHistoryLength) {
+              sqlResult = sqlHistoryRef.current[expectedHistoryLength - 1]
+              break
+            }
+          }
+
+          // If we didn't get a result, log a warning but continue
+          if (!sqlResult) {
+            console.warn("[v0] SQL execution timed out or failed, chart may not have data")
+          }
         }
 
         // Add chart if present
@@ -361,16 +392,40 @@ export default function Home() {
           const chartType = step.chartSpec.mark?.type || step.chartSpec.mark || "chart"
           chartTypes.push(typeof chartType === "string" ? chartType : "visualization")
 
+          // Inject actual SQL results into chart spec if available
+          let enrichedChartSpec = step.chartSpec
+
+          if (step.sql && sqlResult?.success && sqlResult.result) {
+            // Convert SQL result to Vega-Lite data format
+            const chartData = sqlResult.result.rows.map((row) => {
+              const dataPoint: Record<string, unknown> = {}
+              sqlResult.result!.columns.forEach((col, idx) => {
+                dataPoint[col] = row[idx]
+              })
+              return dataPoint
+            })
+
+            // Inject data into chart spec
+            enrichedChartSpec = {
+              ...step.chartSpec,
+              data: { values: chartData },
+            }
+          } else if (step.sql) {
+            // SQL was supposed to run but failed or timed out
+            console.error("[v0] Cannot create chart - SQL execution failed or no result available")
+            // Still create chart but it will fail to render without data
+          }
+
           const chartMessage: Message = {
             id: `${Date.now()}-chart-${stepNumber}`,
             role: "assistant",
             content: `Visualization for step ${stepNumber}`,
-            chart: step.chartSpec,
+            chart: enrichedChartSpec,
             stepNumber,
             totalSteps,
           }
           setMessages((prev) => [...prev, chartMessage])
-          setCharts((prev) => [...prev, { spec: step.chartSpec!, title: step.description }])
+          setCharts((prev) => [...prev, { spec: enrichedChartSpec, title: step.description }])
 
           // Small delay after chart
           await new Promise((resolve) => setTimeout(resolve, 600))

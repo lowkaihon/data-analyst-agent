@@ -102,7 +102,6 @@ Respond naturally to the user's message while maintaining context from the conve
         },
       ],
       temperature: 0.7, // Natural, conversational tone
-      maxTokens: 200, // Keep responses concise
     })
 
     return Response.json({ message: result.text })

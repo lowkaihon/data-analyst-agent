@@ -177,7 +177,6 @@ Generate a supportive response encouraging them to try again.`
       system: systemPrompt,
       prompt: userPrompt,
       temperature: 0.7, // Slightly creative but still focused
-      maxTokens: 300, // Keep responses concise
     })
 
     return Response.json({ message: result.text })
