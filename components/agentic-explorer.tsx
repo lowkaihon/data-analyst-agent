@@ -93,9 +93,13 @@ export function AgenticExplorer({
     // Add tool calls
     parts.forEach((part: any, partIndex: number) => {
       if (part.type?.startsWith("tool-")) {
+        // Generate unique ID using toolCallId if available, otherwise use message id + type + index
+        const uniqueId =
+          part.toolCallId || part.id || `${message.id}-${part.type}-${partIndex}`
+
         flowItems.push({
           type: "tool",
-          id: `tool-${message.id}-${partIndex}`,
+          id: `tool-${uniqueId}`,
           data: part as ToolUIPart,
         })
       }

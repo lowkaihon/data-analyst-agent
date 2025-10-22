@@ -1,15 +1,10 @@
-import { streamText, stepCountIs } from "ai"
+import { streamText, convertToModelMessages, stepCountIs } from "ai"
 import { openai } from "@ai-sdk/openai"
 import { z } from "zod"
 import { sqlExecutorTool } from "@/lib/tools/sql-executor"
 
 const RequestSchema = z.object({
-  messages: z.array(
-    z.object({
-      role: z.enum(["user", "assistant", "system"]),
-      content: z.string(),
-    }),
-  ),
+  messages: z.array(z.any()), // UI messages from useChat
   schema: z.array(
     z.object({
       name: z.string(),
@@ -36,13 +31,13 @@ export async function POST(req: Request) {
       return Response.json({ error: "OPENAI_API_KEY not configured" }, { status: 500 })
     }
 
-    // Extract the user's question from messages
-    const userMessages = messages.filter((m) => m.role === "user")
-    const question = userMessages[userMessages.length - 1]?.content || ""
-
-    if (!question) {
-      return Response.json({ error: "No question provided" }, { status: 400 })
+    // Validate messages
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      return Response.json({ error: "Messages array is required" }, { status: 400 })
     }
+
+    // Convert UI messages to model messages
+    const modelMessages = convertToModelMessages(messages)
 
     // Build system prompt with dataset context
     const systemPrompt = `You are a data analyst exploring data to answer questions.
@@ -85,7 +80,7 @@ When you're done exploring, provide a concise summary of what you found.`
         executeSQLQuery: sqlExecutorTool,
       },
       system: systemPrompt,
-      prompt: question,
+      messages: modelMessages, // Use messages instead of prompt
       stopWhen: stepCountIs(maxSteps), // Use stepCountIs for multi-step tool execution
 
       // Optional: Track steps for logging/debugging
@@ -98,9 +93,8 @@ When you're done exploring, provide a concise summary of what you found.`
       },
     })
 
-    // Return streaming response
-    // Client will receive real-time updates as tools are called
-    return result.toTextStreamResponse()
+    // Return UI message stream response for useChat compatibility
+    return result.toUIMessageStreamResponse()
   } catch (error) {
     console.error("[Agentic Explore] Error:", error)
 
