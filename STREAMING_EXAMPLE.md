@@ -3,7 +3,7 @@
 ## Backend: `/app/api/agentic-explore/route.ts`
 
 ```typescript
-import { streamText, noToolCallsInLastStep } from "ai"
+import { streamText, stepCountIs } from "ai"
 import { openai } from "@ai-sdk/openai"
 import { sqlExecutorTool } from "@/lib/tools/sql-executor"
 import { visualizationTool } from "@/lib/tools/visualization"
@@ -17,8 +17,7 @@ export async function POST(req: Request) {
       executeSQLQuery: sqlExecutorTool,
       createVisualization: visualizationTool,
     },
-    maxSteps: 15,
-    stopWhen: noToolCallsInLastStep(),
+    stopWhen: stepCountIs(15), // AI SDK v5: Use stepCountIs() instead of maxSteps
 
     system: `You are a data analyst exploring data.
 
@@ -27,22 +26,26 @@ export async function POST(req: Request) {
 
     prompt: question,
 
-    // Optional: Get notified after each step
-    onStepFinish: (step) => {
-      console.log('Step finished:', {
-        stepType: step.stepType, // 'initial' | 'continue' | 'tool-result'
-        toolCalls: step.toolCalls,
-        toolResults: step.toolResults,
-        text: step.text,
-        finishReason: step.finishReason
+    // Optional: Get notified when finished
+    onFinish: ({ text, toolCalls, usage }) => {
+      console.log('Exploration finished:', {
+        toolCalls: toolCalls?.length || 0,
+        hasText: !!text,
+        tokensUsed: usage?.totalTokens || 0
       })
     }
   })
 
   // Stream the response to the client
-  return result.toDataStreamResponse()
+  return result.toTextStreamResponse()
 }
 ```
+
+**Key API Changes in AI SDK v5**:
+- ✅ Use `stepCountIs(n)` instead of `maxSteps`
+- ✅ Use `toTextStreamResponse()` instead of `toDataStreamResponse()`
+- ✅ Use `onFinish` callback instead of `onStepFinish`
+- ✅ Tool definitions use `inputSchema` instead of `parameters`
 
 ## Frontend: React Component with `useChat`
 
@@ -334,8 +337,8 @@ When using `streamText`, the response stream includes:
 ```typescript
 const result = streamText({
   tools: { ... },
-  stopWhen: noToolCallsInLastStep(),
-  // When AI stops calling tools, the stream ends naturally
+  stopWhen: stepCountIs(10), // AI SDK v5 API
+  // After 10 tool call steps, the stream ends
   // Final text chunk is the brief summary
 })
 
@@ -343,9 +346,14 @@ const result = streamText({
 // Step 1: Tool call → Tool result
 // Step 2: Tool call → Tool result
 // Step 3: Tool call → Tool result
-// Step 4: Text (no tool calls) ← stopWhen triggers here
+// ...
+// Step N: Text (AI decides it's done or reaches limit)
 // Stream ends with brief summary
 ```
+
+**Important**: AI SDK v5 changed the API:
+- Old: `maxSteps: 10` or `stopWhen: noToolCallsInLastStep()`
+- New: `stopWhen: stepCountIs(10)`
 
 ---
 

@@ -21,11 +21,11 @@ This roadmap breaks down the implementation into concrete, actionable steps with
 - `lib/services/duckdb-manager.ts` - DuckDB connection management
 
 **Tasks**:
-- [ ] Install required dependencies: `pnpm add duckdb`
-- [ ] Create tool type definitions
-- [ ] Implement SQL query validation (read-only checks)
-- [ ] Set up DuckDB connection pooling
-- [ ] Add query timeout protection
+- [x] Install required dependencies: `pnpm add duckdb` (already installed)
+- [x] Create tool type definitions
+- [x] Implement SQL query validation (read-only checks)
+- [x] Set up DuckDB connection pooling
+- [x] Add query timeout protection
 
 ### Step 1.2: Create SQL execution tool (2-3 hours)
 
@@ -51,11 +51,11 @@ export const sqlExecutorTool = tool({
 ```
 
 **Tasks**:
-- [ ] Implement query validation logic
-- [ ] Add DuckDB query execution
-- [ ] Format results (columns + rows)
-- [ ] Handle errors gracefully
-- [ ] Add logging
+- [x] Implement query validation logic
+- [x] Add DuckDB query execution
+- [x] Format results (columns + rows)
+- [x] Handle errors gracefully
+- [x] Add logging
 
 ### Step 1.3: Create streaming agentic exploration endpoint (4-5 hours)
 
@@ -64,7 +64,7 @@ export const sqlExecutorTool = tool({
 
 **Implementation** (Two-Stage Approach with Streaming):
 ```typescript
-import { streamText, noToolCallsInLastStep } from "ai"
+import { streamText, stepCountIs } from "ai"
 import { openai } from "@ai-sdk/openai"
 import { sqlExecutorTool } from "@/lib/tools/sql-executor"
 
@@ -76,8 +76,7 @@ export async function POST(req: Request) {
     tools: {
       executeSQLQuery: sqlExecutorTool
     },
-    maxSteps: 10,
-    stopWhen: noToolCallsInLastStep(),
+    stopWhen: stepCountIs(10), // AI SDK v5: Use stepCountIs() instead of maxSteps
     system: `You are a data analyst exploring data to answer questions.
 
     Use the executeSQLQuery tool to analyze the data.
@@ -87,19 +86,19 @@ export async function POST(req: Request) {
     Your final message should be a concise summary of key findings.`,
     prompt: question,
 
-    // Optional: Track steps as they happen (for logging)
-    onStepFinish: (step) => {
-      console.log('Step finished:', {
-        toolCalls: step.toolCalls?.length || 0,
-        hasText: !!step.text,
-        finishReason: step.finishReason
+    // Optional: Track when finished (for logging)
+    onFinish: ({ text, toolCalls, usage }) => {
+      console.log('Exploration finished:', {
+        toolCalls: toolCalls?.length || 0,
+        hasText: !!text,
+        tokensUsed: usage?.totalTokens || 0
       })
     }
   })
 
   // Stream the response to the client
   // Client will receive real-time updates as tools are called
-  return result.toDataStreamResponse()
+  return result.toTextStreamResponse()
 }
 ```
 
@@ -110,15 +109,20 @@ export async function POST(req: Request) {
 - ✅ Easier to implement streaming early than add later
 - ✅ Users see progress, not just loading spinner
 
+**AI SDK v5 API Notes**:
+- Use `stepCountIs(n)` not `maxSteps`
+- Use `toTextStreamResponse()` not `toDataStreamResponse()`
+- Tool definitions use `inputSchema` not `parameters`
+
 **Tasks**:
-- [ ] Create streaming endpoint structure for Stage 1
-- [ ] Use `streamText` instead of `generateText`
-- [ ] Integrate SQL tool
-- [ ] Set up stopWhen conditions
-- [ ] Configure system prompt to return brief summary (NOT full report)
-- [ ] Return streaming response via `toDataStreamResponse()`
-- [ ] Add error handling for streams
-- [ ] Test with example questions and verify real-time updates
+- [x] Create streaming endpoint structure for Stage 1
+- [x] Use `streamText` instead of `generateText`
+- [x] Integrate SQL tool
+- [x] Set up stopWhen conditions with `stepCountIs()`
+- [x] Configure system prompt to return brief summary (NOT full report)
+- [x] Return streaming response via `toTextStreamResponse()`
+- [x] Add error handling for streams
+- [ ] Test with example questions and verify real-time updates (needs integration testing)
 
 ### Step 1.4: Create basic streaming UI (3-4 hours)
 
@@ -171,12 +175,12 @@ export function AgenticExplorer({ dataset }) {
 ```
 
 **Tasks**:
-- [ ] Install `ai` package for `useChat` hook
-- [ ] Create streaming UI component
-- [ ] Display tool calls in real-time
-- [ ] Show tool execution status (loading → complete)
-- [ ] Style tool call cards
-- [ ] Test streaming with backend
+- [x] Install `ai` package for `useChat` hook (already installed)
+- [x] Create streaming UI component
+- [x] Display tool calls in real-time
+- [x] Show tool execution status (loading → complete)
+- [x] Style tool call cards with shadcn/ui components
+- [ ] Test streaming with backend (needs integration testing)
 
 ### Step 1.5: Test and validate streaming (2-3 hours)
 
@@ -193,13 +197,15 @@ export function AgenticExplorer({ dataset }) {
    - Verify: See all steps stream sequentially
 
 **Tasks**:
-- [ ] Create test dataset (CSV)
-- [ ] Test each query type with streaming UI
-- [ ] Verify real-time updates work correctly
-- [ ] Measure token usage
-- [ ] Track step counts
-- [ ] Compare quality to current system
-- [ ] Ensure stream completes with brief summary
+- [ ] Create test dataset (CSV) - TODO: Integration testing
+- [ ] Test each query type with streaming UI - TODO: Integration testing
+- [ ] Verify real-time updates work correctly - TODO: Integration testing
+- [ ] Measure token usage - TODO: Integration testing
+- [ ] Track step counts - TODO: Integration testing
+- [ ] Compare quality to current system - TODO: Integration testing
+- [ ] Ensure stream completes with brief summary - TODO: Integration testing
+
+**Status**: ⚠️ Code complete, awaiting integration testing with actual data
 
 ### Step 1.6: Update existing report endpoint (1-2 hours)
 
@@ -354,8 +360,7 @@ const result = streamText({
     profileData: profilerTool,
     validateAnalysis: validatorTool
   },
-  maxSteps: 15,
-  stopWhen: noToolCallsInLastStep(),
+  stopWhen: stepCountIs(15), // AI SDK v5 API
   system: `You are a data analyst exploring data to answer questions.
 
   Available tools:
@@ -370,7 +375,7 @@ const result = streamText({
 })
 
 // Return stream - client will see all tool calls in real-time
-return result.toDataStreamResponse()
+return result.toTextStreamResponse()
 ```
 
 **Note**: With streaming, the client automatically receives:

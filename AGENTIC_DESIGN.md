@@ -48,10 +48,12 @@ Manual trigger → Use existing /api/report
 
 **Interface**:
 ```typescript
-{
-  name: "executeSQLQuery",
+import { tool } from "ai"
+import { z } from "zod"
+
+export const sqlExecutorTool = tool({
   description: "Execute a read-only SQL query against the dataset table 't_parsed'",
-  parameters: z.object({
+  inputSchema: z.object({
     query: z.string().describe("DuckDB SQL query (SELECT only)"),
     reason: z.string().describe("Why this query is needed for the analysis")
   }),
@@ -59,8 +61,10 @@ Manual trigger → Use existing /api/report
     // Execute using DuckDB
     // Return results with columns and rows
   }
-}
+})
 ```
+
+**Note**: AI SDK v5 uses `inputSchema` (not `parameters`)
 
 **Capabilities**:
 - Execute SELECT queries only (read-only)
@@ -350,9 +354,9 @@ Response: {
 #### Stage 1: Exploration (Agentic)
 
 ```typescript
-import { generateText, noToolCallsInLastStep, stepCountIs } from "ai"
+import { streamText, stepCountIs } from "ai"
 
-const result = await generateText({
+const result = streamText({
   model: openai("gpt-4o"),
   tools: {
     executeSQLQuery,
@@ -360,11 +364,7 @@ const result = await generateText({
     profileData,
     validateAnalysis
   },
-  maxSteps: 15,
-  stopWhen: [
-    noToolCallsInLastStep(), // Stop when AI doesn't need more tools
-    stepCountIs(15) // Safety: max 15 steps
-  ],
+  stopWhen: stepCountIs(15), // AI SDK v5: Use stepCountIs() instead of maxSteps
   system: `Analyze the data to answer the question using available tools.
 
   When you have gathered enough insights, provide a BRIEF summary (2-3 sentences).
@@ -374,7 +374,9 @@ const result = await generateText({
   prompt: question
 })
 
-// result.text contains brief summary, NOT full report
+// Stream response to client for real-time updates
+return result.toTextStreamResponse()
+
 // User must manually trigger report generation
 ```
 
@@ -382,14 +384,15 @@ const result = await generateText({
 
 ```typescript
 // Only called when user clicks "Generate Report" button
-const report = await generateText({
+const report = streamText({
   model: openai("gpt-4o"),
   // NO tools - just text generation
   system: `Create a comprehensive markdown report based on the exploration results...`,
   prompt: `Generate report for: "${question}"\n\nExploration findings: ${explorationResults}`
 })
 
-// report.text contains full comprehensive markdown report
+return report.toTextStreamResponse()
+// Full comprehensive markdown report
 ```
 
 ### Why This Two-Stage Strategy?
@@ -402,9 +405,10 @@ const report = await generateText({
 5. **Clear Separation**: Exploration ≠ Report generation
 
 #### stopWhen Behavior:
-- **`noToolCallsInLastStep()`**: AI signals "exploration complete" by not calling tools
-- **`stepCountIs(15)`**: Safety net to prevent infinite loops
+- **`stepCountIs(15)`**: Limits exploration to maximum 15 tool call steps
+- AI naturally stops when it has enough information (often before reaching limit)
 - **After stopWhen triggers**: Return brief summary, NOT full report
+- **Note**: AI SDK v5 uses `stepCountIs()` - older versions used `maxSteps` or `noToolCallsInLastStep()`
 
 ### Typical Step Count by Analysis Type
 
