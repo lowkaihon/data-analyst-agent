@@ -2,6 +2,7 @@ import { streamText, convertToModelMessages, stepCountIs } from "ai"
 import { openai } from "@ai-sdk/openai"
 import { z } from "zod"
 import { sqlExecutorBridgeTool } from "@/lib/tools/sql-executor-bridge"
+import { visualizationBridgeTool } from "@/lib/tools/visualization-bridge"
 
 const RequestSchema = z.object({
   messages: z.array(z.any()), // UI messages from useChat
@@ -55,29 +56,44 @@ ${JSON.stringify(sample, null, 2)}
 
 **Your Task:**
 Use the executeSQLQuery tool to explore and analyze the data to answer the user's question.
+You can also use the createVisualization tool to create charts that illustrate your findings.
+
+**Available Tools:**
+1. executeSQLQuery - Query the data
+2. createVisualization - Create charts (bar, line, scatter, area, pie)
 
 **Important Guidelines:**
 1. Table name is always "t_parsed"
 2. Only use SELECT, WITH, and PRAGMA queries (read-only)
 3. Be strategic - use queries to explore patterns, not just dump data
 4. Build insights progressively from your query results
-5. When you have gathered sufficient insights, provide a BRIEF summary (2-3 sentences max)
-6. DO NOT generate a comprehensive report - just summarize key findings
-7. The user will decide whether to generate a full report separately
+5. Create visualizations when they help illustrate patterns or trends
+6. When you have gathered sufficient insights, provide a BRIEF summary (2-3 sentences max)
+7. DO NOT generate a comprehensive report - just summarize key findings
+8. The user will decide whether to generate a full report separately
 
 **Analysis Approach:**
 - Start with overview queries to understand the data
 - Then dive deeper into specific patterns you discover
 - Focus on answering the user's question directly
+- Create visualizations to illustrate key findings
 - Validate your findings if they seem significant
+
+**When to Use Visualizations:**
+- Use bar charts to compare categories
+- Use line charts to show trends over time
+- Use scatter plots to explore relationships
+- Use area charts for cumulative values
+- Use pie charts for proportions
 
 When you're done exploring, provide a concise summary of what you found.`
 
-    // Stream the agentic exploration with bridge tool
+    // Stream the agentic exploration with bridge tools
     const result = streamText({
       model: openai("gpt-4o"),
       tools: {
         executeSQLQuery: sqlExecutorBridgeTool, // Use bridge version
+        createVisualization: visualizationBridgeTool, // NEW: Visualization tool
       },
       system: systemPrompt,
       messages: modelMessages,

@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useRef } from "react"
 import { UploadZone } from "@/components/upload-zone"
 import { ChatInterface, type Message } from "@/components/chat-interface"
 import { DataTabs } from "@/components/data-tabs"
+import { AgenticExplorerBridge } from "@/components/agentic-explorer-bridge"
 import { getDB, loadCSV, executeQuery, getSchema } from "@/lib/duckdb"
 import { validateSQL } from "@/lib/sql-guards"
 import { getSample } from "@/lib/profiling"
@@ -47,6 +48,12 @@ export default function Home() {
   const [reportContent, setReportContent] = useState("")
   const [isGeneratingReport, setIsGeneratingReport] = useState(false)
   const [activeTab, setActiveTab] = useState("preview")
+
+  // Exploration mode state
+  const [isExplorationMode, setIsExplorationMode] = useState(false)
+  const [explorationQuestion, setExplorationQuestion] = useState("")
+  const [explorationSummary, setExplorationSummary] = useState("")
+  const [isExplorationComplete, setIsExplorationComplete] = useState(false)
 
   // Panel refs for collapse/expand functionality
   const leftPanelRef = useRef<ImperativePanelHandle>(null)
@@ -643,9 +650,14 @@ export default function Home() {
 
     setIsGeneratingReport(true)
     try {
-      // Get the original question from the first user message
-      const firstUserMessage = messages.find((m) => m.role === "user")
-      const question = firstUserMessage?.content || "Data analysis"
+      // Get the original question
+      let question: string
+      if (isExplorationMode) {
+        question = explorationQuestion || "Data analysis"
+      } else {
+        const firstUserMessage = messages.find((m) => m.role === "user")
+        question = firstUserMessage?.content || "Data analysis"
+      }
 
       // Call the report API
       const response = await fetch("/api/report", {
@@ -661,6 +673,8 @@ export default function Home() {
               result: h.result,
             })),
           charts: charts.map((c) => c.spec),
+          // Add exploration summary if available
+          explorationSummary: explorationSummary || undefined,
         }),
       })
 
@@ -685,7 +699,27 @@ export default function Home() {
     } finally {
       setIsGeneratingReport(false)
     }
-  }, [schema, messages, sqlHistory, charts])
+  }, [schema, messages, sqlHistory, charts, isExplorationMode, explorationQuestion, explorationSummary])
+
+  // Handle exploration mode toggle
+  const handleStartExploration = useCallback((question: string) => {
+    setExplorationQuestion(question)
+    setIsExplorationMode(true)
+    setIsExplorationComplete(false)
+    setExplorationSummary("")
+  }, [])
+
+  // Handle exploration completion
+  const handleExplorationComplete = useCallback((summary: string) => {
+    setExplorationSummary(summary)
+    setIsExplorationComplete(true)
+  }, [])
+
+  // Handle returning to chat mode
+  const handleExitExploration = useCallback(() => {
+    setIsExplorationMode(false)
+    setExplorationQuestion("")
+  }, [])
 
   return (
     <div className="h-screen flex flex-col">
@@ -740,19 +774,54 @@ export default function Home() {
               collapsible
               className="flex flex-col overflow-hidden"
             >
-              <ChatInterface
-                messages={messages}
-                onSendMessage={handleSendMessage}
-                onApprovePlan={handleApprovePlan}
-                onRejectPlan={handleRejectPlan}
-                onExecuteSQL={async (sql) => {
-                  await handleExecuteSQL(sql)
-                }}
-                disabled={isLoading}
-                onGenerateReport={handleGenerateReport}
-                isGeneratingReport={isGeneratingReport}
-                isDataLoaded={!!fileName}
-              />
+              {isExplorationMode && schema ? (
+                <div className="flex flex-col h-full">
+                  <div className="p-4 border-b flex items-center justify-between">
+                    <div>
+                      <h3 className="font-semibold">AI Data Exploration</h3>
+                      <p className="text-sm text-muted-foreground">{explorationQuestion}</p>
+                    </div>
+                    <Button variant="outline" size="sm" onClick={handleExitExploration}>
+                      Exit Exploration
+                    </Button>
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-4">
+                    <AgenticExplorerBridge
+                      question={explorationQuestion}
+                      schema={schema.map((col) => ({
+                        name: col.name,
+                        type: col.type,
+                      }))}
+                      sample={{
+                        columns: previewData?.columns || [],
+                        rows: previewData?.rows.slice(0, 5) || [],
+                      }}
+                      rowCount={rowCount}
+                      dataDescription={dataDescription || undefined}
+                      onExplorationComplete={handleExplorationComplete}
+                      onGenerateReport={
+                        isExplorationComplete ? handleGenerateReport : undefined
+                      }
+                      db={db}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <ChatInterface
+                  messages={messages}
+                  onSendMessage={handleSendMessage}
+                  onApprovePlan={handleApprovePlan}
+                  onRejectPlan={handleRejectPlan}
+                  onExecuteSQL={async (sql) => {
+                    await handleExecuteSQL(sql)
+                  }}
+                  disabled={isLoading}
+                  onGenerateReport={handleGenerateReport}
+                  isGeneratingReport={isGeneratingReport}
+                  isDataLoaded={!!fileName}
+                  onStartExploration={handleStartExploration}
+                />
+              )}
             </Panel>
 
             {/* Resize handle with collapse/expand buttons */}

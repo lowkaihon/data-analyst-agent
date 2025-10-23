@@ -19,15 +19,71 @@ This project strictly uses **pnpm**. Do not use npm or yarn.
 
 ### AI Integration
 
-- Uses AI SDK 5's `streamText()` for streaming responses
-- API route at `/api/chat` expects `{ messages: Array }` and returns streaming text
-- use useChat for all streaming handling (read the doc first, always, before writing any streaming code: https://ai-sdk.dev/docs/reference/ai-sdk-ui/use-chat)
-- **CRITICAL**: `sendMessage()` from useChat ONLY accepts UIMessage-compatible objects: `sendMessage({ text: "message" })`
-- **NEVER** use `sendMessage("string")` - this does NOT work and will cause runtime errors
-- Messages from useChat have a `parts` array structure, NOT a simple `content` field
-- Tool calls and sources are supported in the response format
-- Requires environment variables in `.env.local`
-- Reference: https://ai-sdk.dev/docs/reference/ai-sdk-core/stream-text#streamtext
+#### streamText() for API Routes
+
+Uses AI SDK 5's `streamText()` for streaming responses with tools:
+
+```typescript
+import { streamText, convertToModelMessages, stepCountIs } from 'ai'
+import { openai } from '@ai-sdk/openai'
+
+export async function POST(req: Request) {
+  const { messages, schema, sample } = await req.json()
+
+  // Convert UIMessages to ModelMessages
+  const modelMessages = convertToModelMessages(messages)
+
+  const result = streamText({
+    model: openai("gpt-4o"),
+    tools: { executeSQLQuery: sqlExecutorBridgeTool },
+    system: systemPrompt,
+    messages: modelMessages,
+    stopWhen: stepCountIs(10), // Multi-step tool calling
+  })
+
+  // Return UIMessageStreamResponse for useChat compatibility
+  return result.toUIMessageStreamResponse()
+}
+```
+
+**Critical patterns:**
+- Use `convertToModelMessages()` to convert UIMessages from useChat
+- Use `toUIMessageStreamResponse()` to return compatible stream for useChat
+- Tool results automatically appear in message.parts array
+- Use `stepCountIs(n)` for multi-step tool execution
+
+#### useChat() for Client Components
+
+**CRITICAL**: Read the docs before using: https://ai-sdk.dev/docs/reference/ai-sdk-ui/use-chat
+
+```typescript
+import { useChat } from "@ai-sdk/react"
+import { DefaultChatTransport } from "ai"
+
+const { messages, status, sendMessage } = useChat({
+  transport: new DefaultChatTransport({
+    api: "/api/chat",
+    body: {
+      // Additional context (not messages)
+      schema,
+      sample,
+      rowCount,
+    },
+  }),
+})
+
+// CRITICAL: Only send UIMessage-compatible objects
+sendMessage({ text: "message content" })  // ✅ CORRECT
+sendMessage("string")                      // ❌ WRONG - causes runtime errors
+```
+
+**Message structure:**
+- Messages use `parts` array, NOT `content` field
+- Access text: `message.parts?.filter(p => p.type === "text").map(p => p.text).join("")`
+- Tool calls: `message.parts?.filter(p => p.type?.startsWith("tool-"))`
+- Tool states: `input-streaming`, `input-available`, `output-available`, `output-error`
+
+Requires environment variables in `.env.local`
 
 ### AI SDK Tools
 
@@ -163,14 +219,144 @@ Display tool execution states using AI Elements:
 - **Return Structure**: Keep return types simple to avoid TypeScript complexity
 - **UI Feedback**: Always show tool execution state using AI Elements components
 
-### Chat Architecture
+#### Remote Tool Bridge Pattern (Privacy-Preserving)
 
-- **Frontend**: Use `useChat` hook from `@ai-sdk/react`
-- **API Route**: Validates messages, converts UIMessages to ModelMessages using `convertToModelMessages()`, streams response via `toTextStreamResponse()`
-- **Message Format**: Messages have `parts` array with typed parts (text, tool, source-url, etc.), NOT simple `content` field
-- **Sending Messages**: MUST use `sendMessage({ text: "message" })` format - string format does NOT work
-- **Streaming**: Official `useChat` hook handles streaming automatically
-- **Error Handling**: Graceful fallbacks for API failures via `status` monitoring
+Use when tools need client-side execution (e.g., DuckDB-WASM for privacy):
+
+**Backend - Bridge Tool:**
+```typescript
+import { tool } from 'ai'
+import { registerPendingCall } from '@/lib/tool-bridge'
+
+export const sqlExecutorBridgeTool = tool({
+  description: "Execute SQL query against dataset",
+  inputSchema: z.object({
+    query: z.string().describe("SQL query"),
+    reason: z.string().describe("Why this query is needed")
+  }),
+  execute: async ({ query, reason }, { toolCallId }) => {
+    // Register pending call instead of executing
+    const result = await registerPendingCall(toolCallId, "executeSQLQuery", { query, reason })
+    return result
+  }
+})
+```
+
+**Backend - Tool Bridge Coordinator (`lib/tool-bridge.ts`):**
+```typescript
+// Use globalThis to survive Next.js Fast Refresh
+const globalForPendingCalls = globalThis as unknown as {
+  pendingCalls: Map<string, PendingToolCall> | undefined
+}
+const pendingCalls = globalForPendingCalls.pendingCalls ?? new Map()
+globalForPendingCalls.pendingCalls = pendingCalls
+
+export function registerPendingCall(toolCallId: string, toolName: string, args: any): Promise<any> {
+  return new Promise((resolve, reject) => {
+    pendingCalls.set(toolCallId, { toolCallId, toolName, args, resolve, reject, timestamp: Date.now() })
+    setTimeout(() => {
+      const call = pendingCalls.get(toolCallId)
+      if (call) {
+        pendingCalls.delete(toolCallId)
+        reject(new Error('Tool execution timeout after 30000ms'))
+      }
+    }, 30000)
+  })
+}
+
+export function resolvePendingCall(toolCallId: string, result: any): boolean {
+  const call = pendingCalls.get(toolCallId)
+  if (!call) return false
+  pendingCalls.delete(toolCallId)
+  call.resolve(result)
+  return true
+}
+```
+
+**Backend - Callback Endpoint (`app/api/tool-callback/route.ts`):**
+```typescript
+export async function POST(req: NextRequest) {
+  const { toolCallId, success, result, error } = await req.json()
+
+  if (success && result) {
+    const resolved = resolvePendingCall(toolCallId, result)
+    if (!resolved) return NextResponse.json({ error: "Tool call not found" }, { status: 404 })
+    return NextResponse.json({ success: true })
+  } else {
+    rejectPendingCall(toolCallId, error || "Unknown error")
+    return NextResponse.json({ success: true })
+  }
+}
+```
+
+**Client - Tool Execution & Callback:**
+```typescript
+useEffect(() => {
+  if (!db) return
+
+  const processToolCalls = async () => {
+    for (const message of messages) {
+      const parts = (message as any).parts || []
+
+      for (const part of parts) {
+        // CRITICAL: Only process input-available state (not input-streaming)
+        if (
+          part.type === "tool-executeSQLQuery" &&
+          part.toolCallId &&
+          part.state === "input-available" &&
+          !processedToolCalls.current.has(part.toolCallId)
+        ) {
+          processedToolCalls.current.add(part.toolCallId)
+          const { query } = part.input || {}
+
+          try {
+            const sanitizedSQL = validateSQL(query)
+            // Strip trailing semicolons before adding LIMIT
+            let limitedSQL = sanitizedSQL.trim().replace(/;+\s*$/, '')
+            if (!limitedSQL.match(/LIMIT\s+\d+/i)) {
+              limitedSQL = `${limitedSQL} LIMIT 1000`
+            }
+
+            const conn = await db.connect()
+            const result = await conn.query(limitedSQL)
+            await conn.close()
+
+            // Send success callback
+            await fetch("/api/tool-callback", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                toolCallId: part.toolCallId,
+                success: true,
+                result: { success: true, data: { columns, rows } }
+              })
+            })
+          } catch (error) {
+            // Send error callback
+            await fetch("/api/tool-callback", {
+              method: "POST",
+              body: JSON.stringify({
+                toolCallId: part.toolCallId,
+                success: false,
+                error: error.message
+              })
+            })
+          }
+        }
+      }
+    }
+  }
+
+  processToolCalls().catch(console.error)
+}, [messages, db])
+```
+
+**Critical Implementation Details:**
+1. **globalThis persistence**: Use globalThis to survive Next.js Fast Refresh
+2. **State detection**: Only process `state === "input-available"` (not `input-streaming`)
+3. **SQL semicolons**: Strip trailing semicolons before adding LIMIT
+4. **Async loops**: Use `for...of` with `await`, not `forEach`
+5. **UI reactivity**: Use Map instead of Set for items that need state updates
 
 ### UI Components
 
@@ -191,17 +377,3 @@ Display tool execution states using AI Elements:
 
 - shadcn/ui: `pnpm dlx shadcn@latest add [component-name]`
 - AI Elements: `pnpm dlx ai-elements@latest` (adds all components)
-
-
-
-## Critical Rules for useChat Implementation
-
-**NEVER EVER DO THIS:**
-- ❌ `sendMessage("string")` - This DOES NOT work and causes runtime errors
-- ❌ Accessing `message.content` directly - Messages use `parts` array structure
-- ❌ Passing plain strings to sendMessage
-
-**ALWAYS DO THIS:**
-- ✅ `sendMessage({ text: "message content" })` - Only UIMessage-compatible objects work
-- ✅ Access message content via `message.parts` array
-- ✅ Read AI SDK docs before implementing any useChat functionality

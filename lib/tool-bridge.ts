@@ -15,8 +15,16 @@ export interface PendingToolCall {
 }
 
 // In-memory storage for pending tool calls
+// Uses globalThis to persist across Next.js Fast Refresh in development
 // In production, use Redis or similar for multi-instance support
-const pendingCalls = new Map<string, PendingToolCall>()
+const globalForPendingCalls = globalThis as unknown as {
+  pendingCalls: Map<string, PendingToolCall> | undefined
+}
+
+const pendingCalls =
+  globalForPendingCalls.pendingCalls ?? new Map<string, PendingToolCall>()
+
+globalForPendingCalls.pendingCalls = pendingCalls
 
 // Timeout for tool execution (30 seconds)
 const TOOL_TIMEOUT_MS = 30000

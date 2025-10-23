@@ -7,9 +7,13 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
-import { Loader2, ChevronDown, ChevronRight, Database, CheckCircle2, XCircle } from "lucide-react"
+import { Loader2, ChevronDown, ChevronRight, Database, CheckCircle2, XCircle, BarChart3 } from "lucide-react"
 import { validateSQL } from "@/lib/sql-guards"
 import type { AsyncDuckDB } from "@duckdb/duckdb-wasm"
+import dynamic from "next/dynamic"
+
+// Dynamically import VegaEmbed to avoid SSR issues
+const VegaEmbed = dynamic(() => import("react-vega").then((mod) => mod.VegaEmbed), { ssr: false })
 
 interface AgenticExplorerBridgeProps {
   question: string
@@ -47,6 +51,7 @@ export function AgenticExplorerBridge({
 }: AgenticExplorerBridgeProps) {
   const [hasStarted, setHasStarted] = useState(false)
   const processedToolCalls = useRef(new Set<string>())
+  const [generatedCharts, setGeneratedCharts] = useState<Array<{ id: string; spec: any; title: string }>>([])
 
   const { messages, status, sendMessage } = useChat({
     transport: new DefaultChatTransport({
@@ -72,35 +77,41 @@ export function AgenticExplorerBridge({
   useEffect(() => {
     if (!db) return
 
-    // Find all tool calls in messages
-    messages.forEach((message) => {
-      const parts = (message as any).parts || []
+    // Process tool calls asynchronously
+    const processToolCalls = async () => {
+      for (const message of messages) {
+        const parts = (message as any).parts || []
 
-      parts.forEach(async (part: any) => {
-        if (
-          part.type === "tool-executeSQLQuery" &&
-          part.toolCallId &&
-          part.state === "input-available" &&
-          !processedToolCalls.current.has(part.toolCallId)
-        ) {
-          // Mark as processed
-          processedToolCalls.current.add(part.toolCallId)
+        for (const part of parts) {
+          // Check if this is a SQL tool call that needs execution
+          // ONLY process when input is fully available (not streaming)
+          if (
+            part.type === "tool-executeSQLQuery" &&
+            part.toolCallId &&
+            part.state === "input-available" &&
+            !processedToolCalls.current.has(part.toolCallId)
+          ) {
+            // Mark as processed immediately to prevent duplicates
+            processedToolCalls.current.add(part.toolCallId)
 
-          const { query, reason } = part.input || {}
+            const { query, reason } = part.input || {}
 
-          if (!query) {
-            console.error("[SQL Bridge] No query in tool call", part)
-            return
-          }
+            console.log(`[SQL Bridge Client] Detected tool call:`, {
+              toolCallId: part.toolCallId,
+              state: part.state,
+              hasInput: !!part.input,
+              query: query ? `${query.substring(0, 50)}...` : "undefined",
+              reason,
+            })
 
-          console.log(`[SQL Bridge Client] Executing SQL for ${part.toolCallId}`)
-          console.log(`[SQL Bridge Client] Query: ${query}`)
-
-          try {
-            // Validate SQL first
-            const validation = validateSQL(query)
-            if (!validation.isValid) {
-              console.error(`[SQL Bridge Client] Invalid SQL:`, validation.error)
+            // Validate that we have a query
+            if (!query || typeof query !== "string" || !query.trim()) {
+              console.error("[SQL Bridge Client] Invalid or missing query in tool call:", {
+                toolCallId: part.toolCallId,
+                hasInput: !!part.input,
+                queryType: typeof query,
+                queryValue: query,
+              })
 
               // Send error callback
               await fetch("/api/tool-callback", {
@@ -109,28 +120,42 @@ export function AgenticExplorerBridge({
                 body: JSON.stringify({
                   toolCallId: part.toolCallId,
                   success: false,
-                  error: validation.error || "Invalid SQL query",
+                  error: "No query provided in tool call",
                 }),
               })
 
-              return
+              continue
             }
+
+            console.log(`[SQL Bridge Client] Executing SQL for ${part.toolCallId}`)
+            console.log(`[SQL Bridge Client] Query: ${query}`)
+
+          try {
+            // Validate SQL first (throws on invalid)
+            const sanitizedSQL = validateSQL(query)
 
             // Execute SQL in browser DuckDB
             const conn = await db.connect()
             const startTime = performance.now()
 
             try {
-              // Add LIMIT if not present
-              const limitedSQL = query.trim().match(/LIMIT\s+\d+/i)
-                ? query
-                : `${query} LIMIT 1000`
+              // Remove trailing semicolon and add LIMIT if not present
+              let limitedSQL = sanitizedSQL.trim().replace(/;+\s*$/, '')
+
+              if (!limitedSQL.match(/LIMIT\s+\d+/i)) {
+                limitedSQL = `${limitedSQL} LIMIT 1000`
+              }
 
               const result = await conn.query(limitedSQL)
               const executionTimeMs = performance.now() - startTime
 
               const columns = result.schema.fields.map((f) => f.name)
-              const rows = result.toArray().map((row) => Object.values(row))
+              // Convert BigInt values to Numbers to avoid JSON serialization errors
+              const rows = result.toArray().map((row) =>
+                Object.values(row).map(val =>
+                  typeof val === 'bigint' ? Number(val) : val
+                )
+              )
 
               console.log(
                 `[SQL Bridge Client] Success: ${rows.length} rows in ${executionTimeMs}ms`
@@ -160,7 +185,12 @@ export function AgenticExplorerBridge({
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error)
 
-            console.error(`[SQL Bridge Client] Error:`, errorMessage)
+            console.error(`[SQL Bridge Client] Error executing SQL:`, {
+              toolCallId: part.toolCallId,
+              error: errorMessage,
+              errorType: error instanceof Error ? error.constructor.name : typeof error,
+              query: query?.substring(0, 100),
+            })
 
             // Send error callback
             await fetch("/api/tool-callback", {
@@ -174,12 +204,154 @@ export function AgenticExplorerBridge({
             })
           }
         }
-      })
+
+        // Handle createVisualization tool calls
+        if (
+          part.type === "tool-createVisualization" &&
+          part.toolCallId &&
+          part.state === "input-available" &&
+          !processedToolCalls.current.has(part.toolCallId)
+        ) {
+          // Mark as processed immediately to prevent duplicates
+          processedToolCalls.current.add(part.toolCallId)
+
+          const { sqlQuery, vegaLiteSpec, title, reason, chartType } = part.input || {}
+
+          console.log(`[Visualization Bridge Client] Detected tool call:`, {
+            toolCallId: part.toolCallId,
+            chartType,
+            title,
+            reason,
+          })
+
+          // Validate inputs
+          if (!sqlQuery || !vegaLiteSpec || !title) {
+            console.error("[Visualization Bridge Client] Invalid inputs:", {
+              hasSqlQuery: !!sqlQuery,
+              hasVegaLiteSpec: !!vegaLiteSpec,
+              hasTitle: !!title,
+            })
+
+            await fetch("/api/tool-callback", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                toolCallId: part.toolCallId,
+                success: false,
+                error: "Missing required fields for visualization",
+              }),
+            })
+
+            continue
+          }
+
+          console.log(`[Visualization Bridge Client] Executing SQL for chart`)
+
+          try {
+            // Validate and execute SQL
+            const sanitizedSQL = validateSQL(sqlQuery)
+            let limitedSQL = sanitizedSQL.trim().replace(/;+\s*$/, '')
+            if (!limitedSQL.match(/LIMIT\s+\d+/i)) {
+              limitedSQL = `${limitedSQL} LIMIT 1000`
+            }
+
+            const conn = await db.connect()
+            const startTime = performance.now()
+
+            try {
+              const result = await conn.query(limitedSQL)
+              const executionTimeMs = performance.now() - startTime
+
+              const columns = result.schema.fields.map((f) => f.name)
+              const rows = result.toArray().map((row) =>
+                Object.values(row).map(val =>
+                  typeof val === 'bigint' ? Number(val) : val
+                )
+              )
+
+              console.log(`[Visualization Bridge Client] SQL Success: ${rows.length} rows`)
+
+              // Convert rows to Vega-Lite data format
+              const chartData = rows.map((row) => {
+                const dataPoint: Record<string, unknown> = {}
+                columns.forEach((col, idx) => {
+                  dataPoint[col] = row[idx]
+                })
+                return dataPoint
+              })
+
+              // Inject data into Vega-Lite spec
+              const enrichedSpec = {
+                ...vegaLiteSpec,
+                data: { values: chartData },
+                title: title,
+              }
+
+              // Store chart for display
+              setGeneratedCharts((prev) => [
+                ...prev,
+                {
+                  id: part.toolCallId,
+                  spec: enrichedSpec,
+                  title,
+                },
+              ])
+
+              console.log(`[Visualization Bridge Client] Chart generated successfully`)
+
+              // Send success callback
+              await fetch("/api/tool-callback", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  toolCallId: part.toolCallId,
+                  success: true,
+                  result: {
+                    success: true,
+                    chartGenerated: true,
+                    dataPoints: chartData.length,
+                    executionTimeMs: Math.round(executionTimeMs),
+                  },
+                }),
+              })
+            } finally {
+              await conn.close()
+            }
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error)
+
+            console.error(`[Visualization Bridge Client] Error:`, {
+              toolCallId: part.toolCallId,
+              error: errorMessage,
+            })
+
+            // Send error callback
+            await fetch("/api/tool-callback", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                toolCallId: part.toolCallId,
+                success: false,
+                error: errorMessage,
+              }),
+            })
+          }
+        }
+      }
+    }
+    }
+
+    // Call the async function
+    processToolCalls().catch((error) => {
+      console.error("[SQL Bridge Client] Error processing tool calls:", error)
     })
   }, [messages, db])
 
-  // Detect when exploration is complete
-  const isComplete = status !== "streaming" && messages.length > 0
+  // Detect when exploration is complete - only when we have assistant responses
+  const hasAssistantResponse = messages.some(
+    (m) => m.role === "assistant" && (m as any).parts?.length > 0
+  )
+  const isComplete = status !== "streaming" && hasAssistantResponse
   const isExploring = status === "streaming"
 
   // Notify parent when complete
@@ -197,14 +369,12 @@ export function AgenticExplorerBridge({
   }, [isComplete, messages])
 
   // Extract all flow items (text and tools) from messages
-  const flowItems: Array<{
+  // Use Map to allow updates when state changes during streaming
+  const flowItemsMap = new Map<string, {
     type: "text" | "tool"
     id: string
     data: any
-  }> = []
-
-  // Track seen IDs to prevent duplicates
-  const seenIds = new Set<string>()
+  }>()
 
   messages.forEach((message, messageIndex) => {
     const parts = (message as any).parts || []
@@ -217,15 +387,12 @@ export function AgenticExplorerBridge({
           part.toolCallId || part.id || `${message.id}-${part.type}-${partIndex}`
         const fullId = `tool-${uniqueId}`
 
-        // Only add if not already seen
-        if (!seenIds.has(fullId)) {
-          seenIds.add(fullId)
-          flowItems.push({
-            type: "tool",
-            id: fullId,
-            data: part as ToolUIPart,
-          })
-        }
+        // Update or add tool call (allows state updates during streaming)
+        flowItemsMap.set(fullId, {
+          type: "tool",
+          id: fullId,
+          data: part as ToolUIPart,
+        })
       }
     })
 
@@ -236,19 +403,19 @@ export function AgenticExplorerBridge({
     if (hasTextContent && message.role === "assistant") {
       const textId = `text-${message.id}`
 
-      // Only add if not already seen
-      if (!seenIds.has(textId)) {
-        seenIds.add(textId)
-        flowItems.push({
-          type: "text",
-          id: textId,
-          data: {
-            content: textParts.map((p: any) => p.text).join(""),
-          },
-        })
-      }
+      // Update or add text content (allows updates during streaming)
+      flowItemsMap.set(textId, {
+        type: "text",
+        id: textId,
+        data: {
+          content: textParts.map((p: any) => p.text).join(""),
+        },
+      })
     }
   })
+
+  // Convert map to array for rendering
+  const flowItems = Array.from(flowItemsMap.values())
 
   const toolCallCount = flowItems.filter((item) => item.type === "tool").length
 
@@ -285,6 +452,23 @@ export function AgenticExplorerBridge({
             )
           }
         })}
+
+        {/* Display generated charts */}
+        {generatedCharts.map((chart) => (
+          <Card key={chart.id}>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-sm font-medium">
+                <BarChart3 className="h-4 w-4 text-purple-600" />
+                {chart.title}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="w-full overflow-x-auto">
+                <VegaEmbed spec={chart.spec} />
+              </div>
+            </CardContent>
+          </Card>
+        ))}
 
         {/* Loading indicator */}
         {isExploring && (

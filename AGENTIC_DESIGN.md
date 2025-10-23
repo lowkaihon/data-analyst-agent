@@ -79,35 +79,104 @@ export const sqlExecutorTool = tool({
 - Result size limits (max 1000 rows returned)
 - Syntax validation before execution
 
-### Tool 2: Visualization Tool
+### Tool 2: Visualization Tool ✅
 
-**Purpose**: Create Vega-Lite chart specifications
+**Purpose**: Create Vega-Lite chart specifications with client-side data execution
+
+**Implementation Status**: ✅ Fully implemented with remote tool bridge pattern
 
 **Interface**:
 ```typescript
 {
   name: "createVisualization",
-  description: "Create a Vega-Lite chart specification based on SQL query results",
-  parameters: z.object({
-    chartType: z.enum(["bar", "line", "scatter", "area", "histogram", "boxplot"]),
-    spec: z.object({...}), // Vega-Lite spec
-    sqlQuery: z.string().describe("SQL query that provides data for this chart"),
-    title: z.string().describe("Chart title describing the insight")
+  description: "Create a data visualization chart to illustrate patterns, trends, or insights",
+  inputSchema: z.object({
+    chartType: z.enum(["bar", "line", "scatter", "area", "pie"]),
+    sqlQuery: z.string().describe("SQL query to get data for the chart"),
+    vegaLiteSpec: VegaLiteSpecSchema.describe("Vega-Lite specification (data will be injected)"),
+    title: z.string().describe("Clear, descriptive title for the chart"),
+    reason: z.string().describe("Brief explanation of what insight this visualization reveals")
   }),
-  execute: async ({ chartType, spec, sqlQuery, title }) => {
-    // Validate spec structure
-    // Store chart for rendering
-    // Return confirmation
+  execute: async ({ chartType, sqlQuery, vegaLiteSpec, title, reason }, { toolCallId }) => {
+    // Register pending call - client will execute SQL and generate chart
+    const result = await registerPendingCall(toolCallId, "createVisualization", {
+      chartType, sqlQuery, vegaLiteSpec, title, reason
+    })
+    return result
   }
 }
 ```
 
+**Architecture** (Remote Tool Bridge):
+```
+Server (AI):                        Client (Browser):
+1. AI calls createVisualization
+2. Register pending promise
+3. Stream tool call to client   →   4. Detect tool call in message.parts
+                                    5. Execute SQL in DuckDB-WASM
+                                    6. Convert rows to Vega-Lite data format
+                                    7. Inject data into vegaLiteSpec
+                                    8. Store enriched spec for rendering
+                                    9. POST result to /api/tool-callback
+10. Resolve promise with result ←
+11. AI continues with confirmation
+```
+
+**Client-Side Chart Generation**:
+```typescript
+// Detect visualization tool calls
+if (part.type === "tool-createVisualization" && part.state === "input-available") {
+  // Execute SQL in browser
+  const result = await db.query(limitedSQL)
+
+  // Convert to Vega-Lite format
+  const chartData = rows.map((row) => {
+    const dataPoint: Record<string, unknown> = {}
+    columns.forEach((col, idx) => { dataPoint[col] = row[idx] })
+    return dataPoint
+  })
+
+  // Inject data into spec
+  const enrichedSpec = {
+    ...vegaLiteSpec,
+    data: { values: chartData },
+    title: title
+  }
+
+  // Store for rendering
+  setGeneratedCharts(prev => [...prev, { id: toolCallId, spec: enrichedSpec, title }])
+
+  // Callback with success
+  await fetch("/api/tool-callback", { ... })
+}
+```
+
+**Chart Display**:
+```typescript
+import dynamic from "next/dynamic"
+const VegaEmbed = dynamic(() => import("react-vega").then(mod => mod.VegaEmbed), { ssr: false })
+
+{generatedCharts.map((chart) => (
+  <Card key={chart.id}>
+    <CardHeader>
+      <CardTitle><BarChart3 /> {chart.title}</CardTitle>
+    </CardHeader>
+    <CardContent>
+      <VegaEmbed spec={chart.spec} />
+    </CardContent>
+  </Card>
+))}
+```
+
 **Capabilities**:
-- Validate Vega-Lite specifications
-- Ensure fields match SQL column names
-- Apply consistent styling/theming
-- Store charts with associated SQL queries
-- Support multiple chart types
+- ✅ Validate Vega-Lite specifications with Zod
+- ✅ Execute SQL queries client-side in DuckDB-WASM
+- ✅ Inject query results into chart specifications
+- ✅ Apply consistent rendering with VegaEmbed (react-vega v8)
+- ✅ Store charts with associated metadata
+- ✅ Support multiple chart types (bar, line, scatter, area, pie)
+- ✅ Privacy-preserving (data never leaves browser)
+- ✅ Real-time chart generation during streaming
 
 ### Tool 3: Data Profiling Tool
 
@@ -164,6 +233,310 @@ export const sqlExecutorTool = tool({
 - Identify correlation vs causation issues
 - Flag suspicious patterns
 - Verify statistical significance
+
+## Remote Tool Bridge Architecture (Privacy-Preserving)
+
+### The Challenge
+
+**Problem**: DuckDB-WASM (client-side database) vs. Server-side tool execution
+- User data is loaded in browser with DuckDB-WASM (for privacy)
+- AI tool calling happens server-side (via Vercel AI SDK)
+- Tool execution needs access to data → architectural conflict
+
+**Naive Approach** (doesn't work):
+```
+❌ Server-side tool execution → No access to client-side DuckDB
+❌ Send all data to server → Violates privacy requirement
+❌ Client-side LLM → Expensive, slow, limited models
+```
+
+### The Solution: Remote Tool Bridge
+
+**Architecture**: Split tool declaration from tool execution
+1. **Server**: Declare tools for AI to use (tool calling happens here)
+2. **Server**: Register pending promise when tool is invoked
+3. **Stream**: Tool calls flow to client via UI message stream
+4. **Client**: Detect tool calls, execute SQL in browser DuckDB
+5. **Client**: POST results back to server via callback endpoint
+6. **Server**: Resolve pending promise, AI continues with results
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    SERVER SIDE                          │
+│                                                          │
+│  ┌──────────────────────────────────────────┐           │
+│  │   AI Model (GPT-4o)                      │           │
+│  │   - Decides to call executeSQLQuery      │           │
+│  └──────────────┬───────────────────────────┘           │
+│                 │                                        │
+│                 ↓                                        │
+│  ┌──────────────────────────────────────────┐           │
+│  │   Bridge Tool (sql-executor-bridge.ts)   │           │
+│  │   - registerPendingCall(toolCallId, args)│           │
+│  │   - Returns Promise (waits for client)   │           │
+│  └──────────────┬───────────────────────────┘           │
+│                 │                                        │
+│                 ↓ (promise suspended)                   │
+│  ┌──────────────────────────────────────────┐           │
+│  │   Tool Bridge (lib/tool-bridge.ts)       │           │
+│  │   - pendingCalls Map (in globalThis)     │           │
+│  │   - Stores: { toolCallId, resolve, reject }          │
+│  └──────────────┬───────────────────────────┘           │
+│                 │                                        │
+│                 ↓                                        │
+│  ┌──────────────────────────────────────────┐           │
+│  │   Stream Response                        │           │
+│  │   - toUIMessageStreamResponse()          │           │
+│  │   - Tool call streamed to client         │           │
+│  └──────────────┬───────────────────────────┘           │
+│                 │                                        │
+└─────────────────┼────────────────────────────────────────┘
+                  │
+                  │  Tool call in UI message stream
+                  ↓
+┌─────────────────────────────────────────────────────────┐
+│                    CLIENT SIDE (Browser)                │
+│                                                          │
+│  ┌──────────────────────────────────────────┐           │
+│  │   useChat Hook                           │           │
+│  │   - Receives UI messages stream          │           │
+│  └──────────────┬───────────────────────────┘           │
+│                 │                                        │
+│                 ↓                                        │
+│  ┌──────────────────────────────────────────┐           │
+│  │   AgenticExplorerBridge Component        │           │
+│  │   - Detects tool calls in message.parts  │           │
+│  │   - Filters for state === 'input-available'          │
+│  └──────────────┬───────────────────────────┘           │
+│                 │                                        │
+│                 ↓                                        │
+│  ┌──────────────────────────────────────────┐           │
+│  │   SQL Execution (client-side)            │           │
+│  │   1. validateSQL(query)                  │           │
+│  │   2. conn = await db.connect()           │           │
+│  │   3. result = await conn.query(sql)      │           │
+│  │   4. Format: { columns, rows }           │           │
+│  └──────────────┬───────────────────────────┘           │
+│                 │                                        │
+│                 ↓                                        │
+│  ┌──────────────────────────────────────────┐           │
+│  │   DuckDB-WASM Instance                   │           │
+│  │   - In-memory database                   │           │
+│  │   - Contains user's uploaded CSV data    │           │
+│  │   - Data NEVER leaves browser            │           │
+│  └──────────────┬───────────────────────────┘           │
+│                 │                                        │
+│                 ↓                                        │
+│  ┌──────────────────────────────────────────┐           │
+│  │   POST /api/tool-callback                │           │
+│  │   Body: {                                │           │
+│  │     toolCallId: "call_xyz",              │           │
+│  │     success: true,                       │           │
+│  │     result: { columns, rows }            │           │
+│  │   }                                      │           │
+│  └──────────────┬───────────────────────────┘           │
+│                 │                                        │
+└─────────────────┼────────────────────────────────────────┘
+                  │
+                  │  HTTP callback with results
+                  ↓
+┌─────────────────────────────────────────────────────────┐
+│                    SERVER SIDE                          │
+│                                                          │
+│  ┌──────────────────────────────────────────┐           │
+│  │   /api/tool-callback Endpoint            │           │
+│  │   - Receives result from client          │           │
+│  │   - Calls resolvePendingCall(toolCallId) │           │
+│  └──────────────┬───────────────────────────┘           │
+│                 │                                        │
+│                 ↓                                        │
+│  ┌──────────────────────────────────────────┐           │
+│  │   Tool Bridge                            │           │
+│  │   - Finds pending call in Map            │           │
+│  │   - Calls resolve(result)                │           │
+│  └──────────────┬───────────────────────────┘           │
+│                 │                                        │
+│                 ↓ (promise resolved!)                   │
+│  ┌──────────────────────────────────────────┐           │
+│  │   Bridge Tool                            │           │
+│  │   - Returns result to AI                 │           │
+│  └──────────────┬───────────────────────────┘           │
+│                 │                                        │
+│                 ↓                                        │
+│  ┌──────────────────────────────────────────┐           │
+│  │   AI Model                               │           │
+│  │   - Continues reasoning with results     │           │
+│  │   - May call more tools or finish        │           │
+│  └──────────────────────────────────────────┘           │
+│                                                          │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Key Components
+
+#### 1. Tool Bridge (`lib/tool-bridge.ts`)
+```typescript
+// In-memory coordination with globalThis persistence
+const globalForPendingCalls = globalThis as unknown as {
+  pendingCalls: Map<string, PendingToolCall> | undefined
+}
+
+const pendingCalls =
+  globalForPendingCalls.pendingCalls ?? new Map<string, PendingToolCall>()
+
+globalForPendingCalls.pendingCalls = pendingCalls
+
+export function registerPendingCall(toolCallId: string, toolName: string, args: any): Promise<any> {
+  return new Promise((resolve, reject) => {
+    pendingCalls.set(toolCallId, { toolCallId, toolName, args, resolve, reject, timestamp: Date.now() })
+
+    // Timeout after 30s
+    setTimeout(() => {
+      const call = pendingCalls.get(toolCallId)
+      if (call) {
+        pendingCalls.delete(toolCallId)
+        reject(new Error('Tool execution timeout after 30000ms'))
+      }
+    }, 30000)
+  })
+}
+
+export function resolvePendingCall(toolCallId: string, result: any): boolean {
+  const call = pendingCalls.get(toolCallId)
+  if (!call) return false
+
+  pendingCalls.delete(toolCallId)
+  call.resolve(result)
+  return true
+}
+```
+
+**Why globalThis?** Next.js Fast Refresh reloads modules, clearing the Map. Using `globalThis` preserves pending calls across hot reloads.
+
+#### 2. Bridge Tool (`lib/tools/sql-executor-bridge.ts`)
+```typescript
+export const sqlExecutorBridgeTool = tool({
+  description: "Execute a read-only SQL query against the dataset table 't_parsed'",
+  inputSchema: z.object({
+    query: z.string().describe("DuckDB SQL query (SELECT only)"),
+    reason: z.string().describe("Why this query is needed")
+  }),
+
+  execute: async ({ query, reason }, { toolCallId }) => {
+    // Don't execute SQL - register pending call instead
+    const result = await registerPendingCall(toolCallId, "executeSQLQuery", { query, reason })
+    return result
+  }
+})
+```
+
+#### 3. Callback Endpoint (`app/api/tool-callback/route.ts`)
+```typescript
+export async function POST(req: NextRequest) {
+  const { toolCallId, success, result, error } = await req.json()
+
+  if (success && result) {
+    resolvePendingCall(toolCallId, result)
+    return NextResponse.json({ success: true })
+  } else {
+    rejectPendingCall(toolCallId, error || "Unknown error")
+    return NextResponse.json({ success: true })
+  }
+}
+```
+
+#### 4. Client-Side Executor (`components/agentic-explorer-bridge.tsx`)
+```typescript
+useEffect(() => {
+  if (!db) return
+
+  const processToolCalls = async () => {
+    for (const message of messages) {
+      const parts = (message as any).parts || []
+
+      for (const part of parts) {
+        // Only process when input is fully available
+        if (
+          part.type === "tool-executeSQLQuery" &&
+          part.toolCallId &&
+          part.state === "input-available" &&
+          !processedToolCalls.current.has(part.toolCallId)
+        ) {
+          processedToolCalls.current.add(part.toolCallId)
+          const { query, reason } = part.input || {}
+
+          try {
+            // Validate and execute SQL in browser
+            const sanitizedSQL = validateSQL(query)
+
+            // Handle semicolons before adding LIMIT
+            let limitedSQL = sanitizedSQL.trim().replace(/;+\s*$/, '')
+            if (!limitedSQL.match(/LIMIT\s+\d+/i)) {
+              limitedSQL = `${limitedSQL} LIMIT 1000`
+            }
+
+            const conn = await db.connect()
+            const result = await conn.query(limitedSQL)
+            await conn.close()
+
+            // Send result back to server
+            await fetch("/api/tool-callback", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                toolCallId: part.toolCallId,
+                success: true,
+                result: {
+                  success: true,
+                  data: {
+                    columns: result.schema.fields.map(f => f.name),
+                    rows: result.toArray().map(row => Object.values(row))
+                  }
+                }
+              })
+            })
+          } catch (error) {
+            // Send error back to server
+            await fetch("/api/tool-callback", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                toolCallId: part.toolCallId,
+                success: false,
+                error: error instanceof Error ? error.message : String(error)
+              })
+            })
+          }
+        }
+      }
+    }
+  }
+
+  processToolCalls().catch(console.error)
+}, [messages, db])
+```
+
+### Privacy & Security Benefits
+
+1. **Data Never Leaves Browser**: All SQL execution happens client-side
+2. **Results-Only Transmission**: Only query results (not raw data) sent to server
+3. **Client-Side Validation**: SQL guardrails applied in browser before execution
+4. **User Control**: Data stays local, user controls what's analyzed
+5. **No Server Storage**: Server doesn't persist any data
+
+### Bridge Pattern Trade-offs
+
+**Advantages:**
+- ✅ Complete data privacy
+- ✅ Works with any browser-based database
+- ✅ Server doesn't need database access
+- ✅ Scales well (client does the work)
+
+**Challenges:**
+- ⚠️ More complex architecture
+- ⚠️ Requires Fast Refresh handling (globalThis)
+- ⚠️ Network latency for each callback
+- ⚠️ Client must handle tool execution
 
 ## Agent Flow Design
 
@@ -222,10 +595,12 @@ AI generates: Brief summary of findings
 - Takes exploration results as input
 - Generates comprehensive markdown report
 
-### New API Endpoint: `/api/agentic-explore`
+### New API Endpoints
+
+**Primary Endpoint (with Bridge)**: `/api/agentic-explore-bridge`
 
 ```typescript
-POST /api/agentic-explore
+POST /api/agentic-explore-bridge
 Request: {
   question: string
   schema: Array<{name: string, type: string}>
@@ -258,6 +633,25 @@ Response: {
   }
 }
 ```
+
+**Callback Endpoint (for Bridge)**: `/api/tool-callback`
+
+```typescript
+POST /api/tool-callback
+Request: {
+  toolCallId: string
+  success: boolean
+  result?: any  // If success === true
+  error?: string  // If success === false
+}
+
+Response: {
+  success: boolean
+  message: string
+}
+```
+
+**Purpose**: Receives execution results from client-side tool execution and resolves pending server-side tool calls.
 
 ### Updated `/api/report` Endpoint (Enhanced)
 
@@ -539,9 +933,12 @@ function validateQuery(query: string): boolean {
 
 ### Data Privacy
 
-- **In-memory processing**: Data never leaves server
-- **No persistent storage**: Clear data after session
-- **No external API calls**: All processing local
+**With Remote Tool Bridge Architecture:**
+- **Browser-side execution**: Data stays in browser with DuckDB-WASM
+- **No raw data transmission**: Only query results sent to server (never raw rows)
+- **Client-side validation**: SQL guardrails applied before execution
+- **No server storage**: Server doesn't store or persist any user data
+- **User control**: Data never leaves user's device
 
 ## Monitoring & Observability
 

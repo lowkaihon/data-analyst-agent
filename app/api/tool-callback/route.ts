@@ -24,6 +24,7 @@ export async function POST(req: NextRequest) {
       success,
       hasResult: !!result,
       hasError: !!error,
+      error: error || undefined,
     })
 
     if (success && result) {
