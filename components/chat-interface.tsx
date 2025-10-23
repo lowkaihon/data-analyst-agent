@@ -6,7 +6,7 @@ import { useState, useRef, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card } from "@/components/ui/card"
-import { Send, User, Bot, FileText, Loader2 } from "lucide-react"
+import { Send, User, Bot, FileText, Loader2, Sparkles } from "lucide-react"
 import { Loader } from "@/components/ai-elements/loader"
 import { PlanCard } from "./plan-card"
 import { SQLCard } from "./sql-card"
@@ -38,6 +38,7 @@ interface ChatInterfaceProps {
   onGenerateReport?: () => void
   isGeneratingReport?: boolean
   isDataLoaded?: boolean
+  onStartExploration?: (question: string) => void
 }
 
 export function ChatInterface({
@@ -50,8 +51,10 @@ export function ChatInterface({
   onGenerateReport,
   isGeneratingReport,
   isDataLoaded,
+  onStartExploration,
 }: ChatInterfaceProps) {
   const [input, setInput] = useState("")
+  const [showExploreOption, setShowExploreOption] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const scrollToBottom = () => {
@@ -178,6 +181,23 @@ export function ChatInterface({
             disabled={disabled}
             className="flex-1"
           />
+          {onStartExploration && (
+            <Button
+              type="button"
+              onClick={() => {
+                if (input.trim()) {
+                  onStartExploration(input.trim())
+                  setInput("")
+                }
+              }}
+              disabled={disabled || !input.trim()}
+              variant="secondary"
+              className="flex items-center gap-2"
+            >
+              <Sparkles className="h-4 w-4" />
+              Explore
+            </Button>
+          )}
           <Button type="submit" disabled={disabled || !input.trim()} size="icon">
             <Send className="h-4 w-4" />
           </Button>

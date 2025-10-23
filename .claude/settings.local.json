@@ -15,7 +15,8 @@
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(pnpm dlx:*)",
       "Bash(mkdir:*)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "ask": []
